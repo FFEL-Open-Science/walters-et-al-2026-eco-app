@@ -1,0 +1,893 @@
+---
+title: "Main Figures 3-9"
+format: html
+editor: visual
+---
+
+```{r}
+#| label: setup
+#| message: false
+library(tidyverse)
+library(HDInterval)
+library(ggfan)
+library(RColorBrewer)
+library(gridExtra)
+library(grid)
+library(cowplot)
+library(here)
+
+out <- readRDS(here("outputs/spl_dat_nmix_beta-binomial_dd_all.rds"))
+spl <- as.data.frame(do.call(rbind, out$spl))
+dat <- out$dat
+cnt <- out$cnt
+
+dat <- readRDS(here("outputs/spl_dat_nmix_beta-binomial_dd_all.rds"))$dat
+ns <- nrow(spl)
+
+count <- read_csv(here("data/raw/rb_counts.csv")) |>
+  group_by(year, size_class) |>
+  summarize(count = max(count))
+```
+
+# Figure 3
+
+```{r}
+#| label: fig-3-M-N-Y
+#| message: false
+#| warning: false
+#| fig-cap: XXX
+#| echo: false
+#| fig-height: 16
+#| fig-width: 10
+
+M_spl <- select(spl, starts_with("M[")) |>
+  mutate(iter = 1:n()) |>
+  pivot_longer(starts_with("M["), names_to = "idx", values_to = "M") |>
+  mutate(c = as.numeric(str_extract_all(idx, "[[:digit:]]+", simplify = TRUE)[, 1]),
+         t = as.numeric(str_extract_all(idx, "[[:digit:]]+", simplify = TRUE)[, 2]),
+         year = 1987 + t,
+         size_class = case_when(c == 1 ~ "Size class 1 (10-30cm)",
+                                c == 2 ~ "Size class 2 (30-50cm)",
+                                c == 3 ~ "Size class 3 (50+cm)")) |>
+  filter(year < 2023) # 2023 is projected in the model
+
+M_sry <- group_by(M_spl, t, c, size_class, year) |>
+  summarize(mdn = median(M),
+            lwr_95 = hdi(M, credMass = 0.95)[1], 
+            upr_95 = hdi(M, credMass = 0.95)[2],
+            lwr_50 = hdi(M, credMass = 0.50)[1], 
+            upr_50 = hdi(M, credMass = 0.50)[2])
+
+M_int_spl <- select(spl, starts_with("M_int[")) |>
+  mutate(iter = 1:n()) |>
+  pivot_longer(starts_with("M_int["), names_to = "idx", values_to = "M_int") |>
+  mutate(c = as.numeric(str_extract_all(idx, "[[:digit:]]+", simplify = TRUE)[, 1]),
+         t = as.numeric(str_extract_all(idx, "[[:digit:]]+", simplify = TRUE)[, 2]),
+         year = 1987 + t,
+         size_class = case_when(c == 1 ~ "Size class 1 (10-30cm)",
+                                c == 2 ~ "Size class 2 (30-50cm)",
+                                c == 3 ~ "Size class 3 (50+cm)"))
+
+M_int_sry <- group_by(M_int_spl, t, c, size_class, year) |>
+  summarize(mdn = median(M_int),
+            lwr = hdi(M_int, credMass = 0.95)[1], 
+            upr = hdi(M_int, credMass = 0.95)[2])
+
+N_spl <- select(spl, starts_with("N[")) |>
+  mutate(iter = 1:n()) |>
+  pivot_longer(starts_with("N["), names_to = "idx", values_to = "N") |>
+  mutate(j = as.numeric(str_extract_all(idx, "[[:digit:]]+", simplify = TRUE)[, 1]),
+         t = as.numeric(str_extract_all(idx, "[[:digit:]]+", simplify = TRUE)[, 2]),
+         c = as.numeric(str_extract_all(idx, "[[:digit:]]+", simplify = TRUE)[, 3]),
+         year = if_else(t <= 25, 1987 + t, 1987 + t + 1))
+
+Y <- tibble(Y = c(as.vector(dat$Y[,,1]), as.vector(dat$Y[,,2]), as.vector(dat$Y[,,3])),
+            j = rep(rep(1:3, dim(dat$Y)[2]), 3),
+            t = rep(rep(1:dim(dat$Y)[2], each = dim(dat$Y)[1]), 3),
+            c = rep(1:3, each = dim(dat$Y)[1] * dim(dat$Y)[2])) |>
+            mutate(year = if_else(t <= 25, 1987 + t, 1987 + t + 1))
+
+N_Y_sry <- left_join(N_spl, Y, by = join_by(j, year, c)) |>
+  #mutate(diff = N - Y) |> # just to confirm all N >= Y (they are)
+  group_by(iter, c, year) |>
+  summarize(N_mdn = median(N, na.rm = TRUE),
+            N_max = max(N, na.rm = TRUE),
+            Y_mdn = median(Y, na.rm = TRUE),
+            Y_max = max(Y, na.rm = TRUE)) |>
+  group_by(c, year) |>
+  summarize(N_mdn = median(N_mdn),
+            N_max = median(N_max),
+            Y_mdn = median(Y_mdn),
+            Y_max = median(Y_max),
+            diff_mdn = N_mdn - Y_mdn,
+            diff_max = N_max - Y_max) |>
+  mutate(size_class = case_when(c == 1 ~ "Size class 1 (10-30cm)",
+                                c == 2 ~ "Size class 2 (30-50cm)",
+                                c == 3 ~ "Size class 3 (50+cm)"))
+
+let_M <- tibble(size_class = c("Size class 1 (10-30cm)", 
+                               "Size class 2 (30-50cm)", 
+                               "Size class 3 (50+cm)"),
+                x_pos = rep(2022, 3), 
+                y_pos = c(7000, 3200, 800),
+                label = c("(a)", "(b)", "(c)"))
+
+M_sry |>
+ggplot(aes(x = year, y = mdn)) +
+  #geom_line(colour = "gray75", size = 0.25) +
+  geom_errorbar(aes(ymin = lwr_95, ymax = upr_95), width = 0) +
+  geom_errorbar(aes(ymin = lwr_50, ymax = upr_50), width = 0, size = 1.5) +
+  geom_point(aes(colour = "M")) +
+  geom_point(data = M_int_sry, inherit.aes = FALSE,
+             aes(x = year, y = mdn, colour = "Mint"), shape = 16, size = 2) + 
+  geom_point(data = N_Y_sry, inherit.aes = FALSE,
+             aes(x = year, y = N_max, colour = "N"), shape = 16, size = 2) + 
+  geom_point(data = N_Y_sry, inherit.aes = FALSE,
+             aes(x = year, y = Y_max, colour = "Y"), shape = 16, size = 2) + 
+  geom_text(data = let_M, aes(x = x_pos, y = y_pos, label = label, size = 14),
+            show.legend = FALSE) +
+  #geom_smooth(method = "gam", se = FALSE, colour = "black") +
+  scale_x_continuous(breaks = seq(1988, 2022, 2)) +
+  scale_colour_brewer(type = "div 
+                      ", palette = "RdBu", direction = -1,
+                      labels = c("M", bquote(M[int]), "N", "Y")) +
+  xlab("Year") +
+  ylab("Number of fish") +
+  facet_wrap(~ size_class, ncol = 1, scale = "free_y") +
+  guides(colour = guide_legend(override.aes = list(size = 4))) +
+  theme_bw() +
+  theme(legend.position = "top",
+        legend.title = element_blank(),
+        legend.text = element_text(size = 14),
+        legend.key.size = unit(2, units = "points"),
+        panel.grid = element_blank(),
+        axis.text = element_text(size = 12),
+        axis.title.x = element_text(size = 14, margin = margin(t = 12)),
+        axis.title.y = element_text(size = 14, margin = margin(r = 12)),
+        strip.text = element_text(size = 14))
+```
+
+# Figure 4
+
+```{r}
+#| label: fig-4-gamma-cov
+#| message: false
+#| fig-cap: XXX
+#| echo: false
+#| fig-height: 16
+#| fig-width: 12
+
+coef_gamma <- cbind(select(spl, starts_with("alpha_gamma")),
+                    select(spl, starts_with("z_gamma")),
+                    select(spl, starts_with("beta_gamma")))
+
+M23 <- filter(M_sry, c != 1) |> 
+  group_by(year) |> 
+  summarize(M23 = sum(mdn)) |>
+  pull(M23)
+
+# Compute gamma by air temperature (other covariates at mean)
+gamma_tair <- coef_gamma |> 
+  expand(nesting(`alpha_gamma`, `z_gamma[1]`, `z_gamma[2]`, `z_gamma[3]`,
+                 `beta_gamma[1]`, `beta_gamma[2]`, `beta_gamma[3]`, `beta_gamma_DD`),
+         ztair = seq(min(dat$ztair), max(dat$ztair), 0.1)) |>
+  mutate(gamma = exp(`z_gamma[1]` * `beta_gamma[1]` * ztair) *
+           alpha_gamma / (1 + beta_gamma_DD * (median(M23) / 2)),
+         tair = ztair * sd(dat$tair) + mean(dat$tair))
+
+# Plot gamma by air temperature
+
+let_tair <- tibble(label = "(a)")
+
+plot_gamma_tair <- ggplot(gamma_tair, aes(x = tair, y = gamma)) +
+  geom_fan(show.legend = FALSE, intervals = seq(0, 1, 0.01)) +
+  ggfan::geom_interval(intervals = c(0, 0.5, 0.95)) +
+  geom_text(data = let_tair, aes(x = 12, y = 6.25, label = "(a)", size = 14)) +
+  xlab(bquote("Mean summer air temperature (°C) at"~italic(t-1))) +
+  ylab(bquote("Productivity ("*italic(gamma[t-1])*")")) +
+  scale_y_continuous(breaks = seq(0, 6, 1)) +
+  coord_cartesian(ylim = c(0, 6.25)) +
+  scale_fill_gradientn(colours = rev(brewer.pal(n = 9, "Blues"))) +
+  theme_bw() +
+  theme(legend.position = "none",
+        panel.grid = element_blank(),
+        axis.text = element_text(size = 12),
+        axis.title.x = element_text(size = 14, margin = margin(t = 12)),
+        axis.title.y = element_text(size = 14, margin = margin(r = 12)),
+        strip.text = element_text(size = 14))
+
+# Compute gamma by spring discharge (other covariates at mean)
+gamma_dsch <- coef_gamma |> 
+  expand(nesting(`alpha_gamma`, `z_gamma[1]`, `z_gamma[2]`, `z_gamma[3]`,
+                 `beta_gamma[1]`, `beta_gamma[2]`, `beta_gamma[3]`, `beta_gamma_DD`),
+         zdsch = seq(min(dat$zdsch), max(dat$zdsch), 0.1)) |>
+  mutate(gamma = exp(`z_gamma[2]` * `beta_gamma[2]` * zdsch) *
+           alpha_gamma / (1 + `beta_gamma_DD` * (median(M23) / 2)),
+         dsch = zdsch * sd(dat$dsch) + mean(dat$dsch))
+
+# Plot gamma by spring discharge
+
+let_dsch <- tibble(label = "(b)")
+
+plot_gamma_dsch <- ggplot(gamma_dsch, aes(x = dsch, y = gamma)) +
+  geom_fan(show.legend = FALSE, intervals = seq(0, 1, 0.01)) +
+  ggfan::geom_interval(intervals = c(0, 0.5, 0.95)) +
+  geom_text(data = let_dsch, aes(x = 20, y = 12.5, label = label, size = 14)) +
+  xlab(bquote("Mean spring discharge ("*m^3/s*") at"~italic(t-1))) +
+  ylab(NULL) +
+  scale_y_continuous(breaks = seq(0, 12, 2)) +
+  coord_cartesian(ylim = c(0, 12.5)) +
+  scale_fill_gradientn(colours = rev(brewer.pal(n = 9, "Blues"))) +
+  theme_bw() +
+  theme(legend.position = "none",
+        panel.grid = element_blank(),
+        axis.text = element_text(size = 12),
+        axis.title.x = element_text(size = 14, margin = margin(t = 12)),
+        axis.title.y = element_text(size = 14, margin = margin(r = 12)),
+        strip.text = element_text(size = 14))
+
+# Compute gamma by sockeye abundance the previous year
+gamma_skt2 <- coef_gamma |> 
+  expand(nesting(`alpha_gamma`, `z_gamma[1]`, `z_gamma[2]`, `z_gamma[3]`,
+                 `beta_gamma[1]`, `beta_gamma[2]`, `beta_gamma[3]`, `beta_gamma_DD`),
+         zskt2 = seq(min(dat$zskt2), max(dat$zskt2), 0.1)) |>
+  mutate(gamma = exp(`z_gamma[3]` * `beta_gamma[3]` * zskt2) *
+           alpha_gamma / (1 + beta_gamma_DD * (median(M23) / 2)),
+         skt2 = zskt2 * sd(dat$skt2) + mean(dat$skt2))
+
+# Plot gamma by sockeye abundance the previous year
+
+let_skt2 <- tibble(label = "(c)")
+
+plot_gamma_skt2 <- ggplot(gamma_skt2, aes(x = skt2 / 1000, y = gamma)) +
+  geom_fan(show.legend = FALSE, intervals = seq(0, 1, 0.01)) +
+  ggfan::geom_interval(intervals = c(0, 0.5, 0.95)) +
+  geom_text(data = let_skt2, aes(x = 30, y = 15.25, label = label, size = 14)) +
+  xlab(bquote("Sockeye salmon spawner abundance (x 1,000) at"~italic(t-2))) +
+  ylab(bquote("Productivity ("*italic(gamma[t-1])*")")) +
+  scale_y_continuous(breaks = seq(0, 14, 2)) +
+  coord_cartesian(ylim = c(0, 15.25)) +
+  scale_fill_gradientn(colours = rev(brewer.pal(n = 9, "Blues"))) +
+  theme_bw() +
+  theme(legend.position = "none",
+        panel.grid = element_blank(),
+        axis.text = element_text(size = 12),
+        axis.title.x = element_text(size = 14, margin = margin(t = 12)),
+        axis.title.y = element_text(size = 14, margin = margin(r = 12)),
+        strip.text = element_text(size = 14))
+
+# Compute gamma as a function of female spawner abundance (other covariates at mean)
+gamma_M <- coef_gamma |> 
+  expand(nesting(coef_gamma),
+         M = seq(min(M23), max(M23), length.out = 100)) |>
+  mutate(gamma = alpha_gamma / (1 + `beta_gamma_DD` * (M / 2))) 
+         
+# Plot gamma by female spawner abundance
+
+let_M <- tibble(label = "(d)")
+
+plot_gamma_M <- ggplot(gamma_M, aes(x = M, y = gamma)) +
+  geom_fan(show.legend = FALSE, intervals = seq(0, 1, 0.01)) +
+  ggfan::geom_interval(intervals = c(0, 0.5, 0.95)) +
+  geom_text(data = let_M, aes(x = 500, y = 4.5, label = label, size = 14)) +
+  xlab(bquote("Female rainbow trout spawner abundance at"~italic(t-1))) +
+  ylab(NULL) +
+  scale_x_continuous(breaks = seq(500, 2250, 250)) +
+  scale_y_continuous(breaks = seq(0, 4, 1)) +
+  coord_cartesian(xlim = c(500, 2300), ylim = c(0, 4.5)) +
+  scale_fill_gradientn(colours = rev(brewer.pal(n = 9, "Blues"))) +
+  theme_bw() +
+  theme(legend.position = "none",
+        panel.grid = element_blank(),
+        axis.text = element_text(size = 12),
+        axis.title.x = element_text(size = 14, margin = margin(t = 12)),
+        axis.title.y = element_text(size = 14, margin = margin(r = 40)),
+        strip.text = element_text(size = 14))
+
+plot_grid(plot_gamma_tair, plot_gamma_dsch, plot_gamma_skt2, plot_gamma_M, 
+          nrow = 2, align = "v", axis = "l")
+```
+
+# Figure 5
+
+```{r}
+#| label: fig-5-phi-cov
+#| message: false
+#| fig-cap: XXX
+#| echo: false
+#| fig-height: 16
+#| fig-width: 10
+
+coef_phi <- cbind(select(spl, starts_with("beta0_phi")),
+                    select(spl, starts_with("z_phi")),
+                    select(spl, starts_with("beta_phi")))
+
+ddM <- group_by(M_sry, c) |>
+  summarize(M = median(mdn))
+
+# Compute predictions by air temperature (other covariates at mean)
+phi_tair <- coef_phi |> 
+  expand(nesting(coef_phi),
+         ztair = seq(min(dat$ztair), max(dat$ztair), 0.1)) |>
+  mutate(`Size class 1 (10-30cm)` = plogis(`beta0_phi[1]` + `z_phi[1, 1]` * `beta_phi[1, 1]` * ztair) /
+           (1 + `beta_phi_DD[1]` * ddM$M[1]), 
+         `Size class 2 (30-50cm)` = plogis(`beta0_phi[2]` + `z_phi[2, 1]` * `beta_phi[2, 1]` * ztair) /
+           (1 + `beta_phi_DD[2]` * ddM$M[2]),
+         `Size class 3 (50+cm)` = plogis(`beta0_phi[3]` + `z_phi[3, 1]` * `beta_phi[3, 1]` * ztair) /
+           (1 + `beta_phi_DD[3]` * ddM$M[3]),
+         tair = ztair * sd(dat$tair) + mean(dat$tair)) |>
+  pivot_longer(`Size class 1 (10-30cm)`:`Size class 3 (50+cm)`, 
+               names_to = "size_class", values_to = "phi")
+
+let_tair <- tibble(size_class = c("Size class 1 (10-30cm)", 
+                                  "Size class 2 (30-50cm)", 
+                                  "Size class 3 (50+cm)"),
+                   label = c("(a)", "(b)", "(c)"))
+
+# Plot survival probability by air temperature
+plot_phi_tair <- ggplot(phi_tair, aes(x = tair, y = phi)) +
+  geom_fan(show.legend = FALSE, intervals = seq(0, 1, 0.01)) +
+  ggfan::geom_interval(intervals = c(0, 0.5, 0.95)) +
+  geom_text(data = let_tair, aes(x = 15.5, y = 1, label = label, size = 14)) +
+  xlab(bquote("Mean summer air temperature (°C) at"~italic(t-1))) +
+  ylab(bquote("Survival probability ("*italic(phi[t-1])*")")) +
+  scale_x_continuous(breaks = seq(11, 16, 1)) +
+  coord_cartesian(ylim = c(0, 1)) +
+  scale_fill_gradientn(colours = rev(brewer.pal(n = 9, "Blues"))) +
+  facet_wrap(~ size_class) +
+  theme_bw() +
+  theme(legend.position = "none",
+        panel.grid = element_blank(),
+        axis.text = element_text(size = 12),
+        axis.title.x = element_text(size = 14, margin = margin(t = 12)),
+        axis.title.y = element_text(size = 14, margin = margin(r = 12)),
+        strip.text = element_text(size = 14))
+
+# Compute predictions by sockeye salmon abundance in the current year (other covariates at mean)
+phi_skt1 <- coef_phi |> 
+  expand(nesting(coef_phi),
+         zskt1 = seq(min(dat$zskt1), max(dat$zskt1), 0.1)) |>
+  mutate(`Size class 1 (10-30cm)` = plogis(`beta0_phi[1]` + `z_phi[1, 3]` * `beta_phi[1, 3]` * zskt1) /
+           (1 + `beta_phi_DD[1]` * ddM$M[1]), 
+         `Size class 2 (30-50cm)` = plogis(`beta0_phi[2]` + `z_phi[2, 3]` * `beta_phi[2, 3]` * zskt1) /
+           (1 + `beta_phi_DD[2]` * ddM$M[2]),
+         `Size class 3 (50+cm)` = plogis(`beta0_phi[3]` + `z_phi[3, 3]` * `beta_phi[3, 3]` * zskt1) /
+           (1 + `beta_phi_DD[3]` * ddM$M[3]),
+         skt1 = zskt1 * sd(dat$skt1) + mean(dat$skt1)) |>
+  pivot_longer(`Size class 1 (10-30cm)`:`Size class 3 (50+cm)`, 
+               names_to = "size_class", values_to = "phi")
+
+# Plot survival probability by sockeye salmon abundance in the current year
+
+let_skt1 <- tibble(size_class = c("Size class 1 (10-30cm)", 
+                                  "Size class 2 (30-50cm)", 
+                                  "Size class 3 (50+cm)"),
+                   label = c("(d)", "(e)", "(f)"))
+
+plot_phi_skt1 <- ggplot(phi_skt1, aes(x = skt1 / 1000, y = phi)) +
+  geom_fan(show.legend = FALSE, intervals = seq(0, 1, 0.01)) +
+  ggfan::geom_interval(intervals = c(0, 0.5, 0.95)) +
+  geom_text(data = let_skt1, aes(x = 475, y = 1, label = label, size = 14)) +
+  xlab(bquote("Sockeye salmon spawner abundance (x 1,000) at"~italic(t-1))) +
+  ylab(bquote("Survival probability ("*italic(phi[t-1])*")")) +
+  coord_cartesian(ylim = c(0, 1)) +
+  scale_fill_gradientn(colours = rev(brewer.pal(n = 9, "Blues"))) +
+  facet_wrap(~ size_class) +
+  theme_bw() +
+  theme(legend.position = "none",
+        panel.grid = element_blank(),
+        axis.text = element_text(size = 12),
+        axis.title.x = element_text(size = 14, margin = margin(t = 12)),
+        axis.title.y = element_text(size = 14, margin = margin(r = 12)),
+        strip.text = element_blank())
+
+# Compute predictions by sockeye salmon abundance in the previous year (other covariates at mean)
+phi_skt2 <- coef_phi |> 
+  expand(nesting(coef_phi),
+         zskt2 = seq(min(dat$zskt2), max(dat$zskt2), 0.1)) |>
+  mutate(`Size class 1 (10-30cm)` = plogis(`beta0_phi[1]` + `z_phi[1, 2]` * `beta_phi[1, 2]` * zskt2) /
+           (1 + `beta_phi_DD[1]` * ddM$M[1]), 
+         `Size class 2 (30-50cm)` = plogis(`beta0_phi[2]` + `z_phi[2, 2]` * `beta_phi[2, 2]` * zskt2) /
+           (1 + `beta_phi_DD[2]` * ddM$M[2]),
+         `Size class 3 (50+cm)` = plogis(`beta0_phi[3]` + `z_phi[3, 2]` * `beta_phi[3, 2]` * zskt2) /
+           (1 + `beta_phi_DD[3]` * ddM$M[3]),
+         skt2 = zskt2 * sd(dat$skt2) + mean(dat$skt2)) |>
+  pivot_longer(`Size class 1 (10-30cm)`:`Size class 3 (50+cm)`, 
+               names_to = "size_class", values_to = "phi")
+
+# Plot survival probability by sockeye salmon abundance in the previous year
+
+let_skt2 <- tibble(size_class = c("Size class 1 (10-30cm)", 
+                                  "Size class 2 (30-50cm)", 
+                                  "Size class 3 (50+cm)"),
+                   label = c("(g)", "(h)", "(i)"))
+
+plot_phi_skt2 <- ggplot(phi_skt2, aes(x = skt2 / 1000, y = phi)) +
+  geom_fan(show.legend = FALSE, intervals = seq(0, 1, 0.01)) +
+  ggfan::geom_interval(intervals = c(0, 0.5, 0.95)) +
+  geom_text(data = let_skt2, aes(x = 490, y = 1, label = label, size = 14)) +
+  xlab(bquote("Sockeye salmon spawner abundance (x 1,000) at"~italic(t-2))) +
+  ylab(bquote("Survival probability ("*italic(phi[t-1])*")")) +
+  coord_cartesian(ylim = c(0, 1)) +
+  scale_fill_gradientn(colours = rev(brewer.pal(n = 9, "Blues"))) +
+  facet_wrap(~ size_class) +
+  theme_bw() +
+  theme(legend.position = "none",
+        panel.grid = element_blank(),
+        axis.text = element_text(size = 12),
+        axis.title.x = element_text(size = 14, margin = margin(t = 12)),
+        axis.title.y = element_text(size = 14, margin = margin(r = 12)),
+        strip.text = element_blank())
+
+# Compute survival as a function of density dependence (other covariates at mean)
+phi_M1 <- coef_phi |> 
+  expand(nesting(coef_phi),
+         M = with(filter(M_sry, c == 1), seq(min(mdn), max(mdn), 10))) |>
+  mutate(size_class = "Size class 1 (10-30cm)",
+         phi = plogis(`beta0_phi[1]`) / (1 + `beta_phi_DD[1]` * M)) 
+
+phi_M2 <- coef_phi |> 
+  expand(nesting(coef_phi),
+         M = with(filter(M_sry, c == 2), seq(min(mdn), max(mdn), 10))) |>
+  mutate(size_class = "Size class 2 (30-50cm)", 
+         phi = plogis(`beta0_phi[1]`) / (1 + `beta_phi_DD[2]` * M))
+
+phi_M3 <- coef_phi |> 
+  expand(nesting(coef_phi),
+         M = with(filter(M_sry, c == 3), seq(min(mdn), max(mdn), 10))) |>
+  mutate(size_class = "Size class 3 (50+cm)", 
+         phi = plogis(`beta0_phi[1]`) / (1 + `beta_phi_DD[3]` * M))
+         
+phi_M <- rbind(select(phi_M1, size_class, phi, M),
+               select(phi_M2, size_class, phi, M),
+               select(phi_M3, size_class, phi, M))
+         
+# Plot survival probability by size class abundance
+
+let_M <- tibble(size_class = c("Size class 1 (10-30cm)", 
+                                "Size class 2 (30-50cm)", 
+                                "Size class 3 (50+cm)"),
+                M = c(3600, 1850, 510),
+                label = c("(k)", "(l)", "(m)"))
+
+plot_phi_M <- ggplot(phi_M, aes(x = M, y = phi)) +
+  geom_fan(show.legend = FALSE, intervals = seq(0, 1, 0.01)) +
+  ggfan::geom_interval(intervals = c(0, 0.5, 0.95)) +
+  geom_text(data = let_M, aes(x = M, y = 1, label = label, size = 14)) +
+  xlab(bquote("Size class abundance at"~italic(t-1))) +
+  ylab(bquote("Survival probability ("*italic(phi[t-1])*")")) +
+  coord_cartesian(ylim = c(0, 1)) +
+  scale_fill_gradientn(colours = rev(brewer.pal(n = 9, "Blues"))) +
+  facet_wrap(~ size_class, scales = "free_x") +
+  theme_bw() +
+  theme(legend.position = "none",
+        panel.grid = element_blank(),
+        axis.text = element_text(size = 12),
+        axis.title.x = element_text(size = 14, margin = margin(t = 12)),
+        axis.title.y = element_text(size = 14, margin = margin(r = 12)),
+        strip.text = element_blank())
+
+grid.arrange(plot_phi_tair, plot_phi_skt1, plot_phi_skt2, plot_phi_M, nrow = 4)
+```
+
+# Figure 6
+
+```{r}
+#| label: fig-6-psi-cov
+#| message: false
+#| fig-cap: XXX
+#| echo: false
+#| fig-height: 16
+#| fig-width: 10
+
+coef_psi <- cbind(select(spl, starts_with("beta0_psi")),
+                  select(spl, starts_with("z_psi")),
+                  select(spl, starts_with("beta_psi")))
+
+# Compute predictions by air temperature (other covariates at mean)
+psi_tair <- coef_psi |> 
+  expand(nesting(coef_psi),
+         ztair = seq(min(dat$ztair), max(dat$ztair), 0.1)) |>
+  mutate(`Size class 1 to 2` = plogis(`beta0_psi[1]` + `z_psi[1]` * `beta_psi[1]` * ztair),
+         `Size class 2 to 3` = plogis(`beta0_psi[2]` + `z_psi[1]` * `beta_psi[1]` * ztair),
+         tair = ztair * sd(dat$tair) + mean(dat$tair)) |>
+  pivot_longer(`Size class 1 to 2`:`Size class 2 to 3`, 
+               names_to = "transition", values_to = "psi")
+
+let_tair <- tibble(transition = c("Size class 1 to 2", 
+                                  "Size class 2 to 3"),
+                   label = c("(a)", "(b)"))
+
+# Plot transition probability by air temperature
+plot_psi_tair <- ggplot(psi_tair, aes(x = tair, y = psi)) +
+  geom_fan(show.legend = FALSE, intervals = seq(0, 1, 0.01)) +
+  ggfan::geom_interval(intervals = c(0, 0.5, 0.95)) +
+  geom_text(data = let_tair, aes(x = 15.5, y = 1, label = label, size = 14)) +
+  xlab(bquote("Mean summer air temperature (°C) at"~italic(t-1))) +
+  ylab(bquote("Transition probability ("*italic(psi[t-1])*")")) +
+  coord_cartesian(ylim = c(0, 1)) +
+  scale_fill_gradientn(colours = rev(brewer.pal(n = 9, "Blues"))) +
+  facet_wrap(~ transition) +
+  theme_bw() +
+  theme(legend.position = "none",
+        panel.grid = element_blank(),
+        axis.text = element_text(size = 12),
+        axis.title.x = element_text(size = 14, margin = margin(t = 12)),
+        axis.title.y = element_text(size = 14, margin = margin(r = 12)),
+        strip.text = element_text(size = 14))
+
+# Compute predictions by sockeye salmon abundance in the current year (other covariates at mean)
+psi_skt1 <- coef_psi |> 
+  expand(nesting(coef_psi),
+         zskt1 = seq(min(dat$zskt1), max(dat$zskt1), 0.1)) |>
+  mutate(`Size class 1 to 2` = plogis(`beta0_psi[1]` + `z_psi[3]` * `beta_psi[3]` * zskt1), 
+         `Size class 2 to 3` = plogis(`beta0_psi[2]` + `z_psi[3]` * `beta_psi[3]` * zskt1),
+         skt1 = zskt1 * sd(dat$skt1) + mean(dat$skt1)) |>
+  pivot_longer(`Size class 1 to 2`:`Size class 2 to 3`, 
+               names_to = "transition", values_to = "psi")
+
+# Plot transition probability by sockeye salmon abundance in the current year
+
+let_skt1 <- tibble(transition = c("Size class 1 to 2", 
+                                  "Size class 2 to 3"),
+                   label = c("(c)", "(d)"))
+
+plot_psi_skt1 <- ggplot(psi_skt1, aes(x = skt1 / 1000, y = psi)) +
+  geom_fan(show.legend = FALSE, intervals = seq(0, 1, 0.01)) +
+  ggfan::geom_interval(intervals = c(0, 0.5, 0.95)) +
+  geom_text(data = let_skt1, aes(x = 500, y = 1, label = label, size = 14)) +
+  xlab(bquote("Sockeye salmon spawner abundance (x 1,000) at"~italic(t-1))) +
+  ylab(bquote("Transition probability ("*psi[t-1]*")")) +
+  coord_cartesian(ylim = c(0, 1)) +
+  scale_fill_gradientn(colours = rev(brewer.pal(n = 9, "Blues"))) +
+  facet_wrap(~ transition) +
+  theme_bw() +
+  theme(legend.position = "none",
+        panel.grid = element_blank(),
+        axis.text = element_text(size = 12),
+        axis.title.x = element_text(size = 14, margin = margin(t = 12)),
+        axis.title.y = element_text(size = 14, margin = margin(r = 12)),
+        strip.text = element_blank())
+
+# Compute predictions by sockeye salmon abundance in the previous year (other covariates at mean)
+psi_skt2 <- coef_psi |> 
+  expand(nesting(coef_psi),
+         zskt2 = seq(min(dat$zskt2), max(dat$zskt2), 0.1)) |>
+  mutate(`Size class 1 to 2` = plogis(`beta0_psi[1]` + `z_psi[2]` * `beta_psi[2]` * zskt2), 
+         `Size class 2 to 3` = plogis(`beta0_psi[2]` + `z_psi[2]` * `beta_psi[2]` * zskt2),
+         skt2 = zskt2 * sd(dat$skt2) + mean(dat$skt2)) |>
+  pivot_longer(`Size class 1 to 2`:`Size class 2 to 3`, 
+               names_to = "transition", values_to = "psi")
+
+# Plot transition probability by sockeye salmon abundance in the previous year
+
+let_skt2 <- tibble(transition = c("Size class 1 to 2", 
+                                  "Size class 2 to 3"),
+                   label = c("(e)", "(f)"))
+
+plot_psi_skt2 <- ggplot(psi_skt2, aes(x = skt2 / 1000, y = psi)) +
+  geom_fan(show.legend = FALSE, intervals = seq(0, 1, 0.01)) +
+  ggfan::geom_interval(intervals = c(0, 0.5, 0.95)) +
+  geom_text(data = let_skt2, aes(x = 500, y = 1, label = label, size = 14)) +
+  xlab(bquote("Sockeye salmon spawner abundance (x 1,000) at"~italic(t-2))) +
+  ylab(bquote("Transition probability ("*psi[t-1]*")")) +
+  coord_cartesian(ylim = c(0, 1)) +
+  scale_fill_gradientn(colours = rev(brewer.pal(n = 9, "Blues"))) +
+  facet_wrap(~ transition) +
+  theme_bw() +
+  theme(legend.position = "none",
+        panel.grid = element_blank(),
+        axis.text = element_text(size = 12),
+        axis.title.x = element_text(size = 14, margin = margin(t = 12)),
+        axis.title.y = element_text(size = 14, margin = margin(r = 12)),
+        strip.text = element_blank())
+
+grid.arrange(plot_psi_tair, plot_psi_skt1, plot_psi_skt2, nrow = 3)
+```
+
+# Figure 7
+
+```{r}
+#| label: fig-7-ltre-variance
+#| message: false
+#| fig-cap: XXX
+#| echo: false
+#| fig-height: 14
+#| fig-width: 10
+
+## Computed based on LTRE decompositions at the level of vital rate predictors (Knape et al 2023)
+ltre_var_vr <- bind_rows(readRDS(here("outputs/output_ltre_var_ep.rds"))$ltre) |>
+  # Remove alpha_gamma as well as psi1 and psi2 and related predictors and 
+  # environmental stochasticties as they don't contribute to variability in lambda.
+  filter(!(type_1 %in% c("Transition (size class 1 to 2)", 
+                         "Transition (size class 2 to 3)"))) |>
+  filter(par != "gamma_alpha") |>
+  mutate(par = factor(type_1, 
+                      levels = c("Productivity", "Survival (size class 1)",
+                                 "Survival (size class 2)", "Survival (size class 3)", 
+                                 "M1", "M2", "M3")),
+         type = factor(type_2, levels = c("Vital rate", "Population structure")))
+
+ltre_var_vr_sry <- group_by(ltre_var_vr, par, type, iter) |>
+  summarize(rel_cont_esds = sum(rel_cont_esds)) |>
+  group_by(par, type) |>
+  summarize(mdn = median(rel_cont_esds),
+            lwr_50 = hdi(rel_cont_esds, credMass = 0.5)[1],
+            upr_50 = hdi(rel_cont_esds, credMass = 0.5)[2],
+            lwr_95 = hdi(rel_cont_esds, credMass = 0.95)[1],
+            upr_95 = hdi(rel_cont_esds, credMass = 0.95)[2])
+
+plot_var_vr <- ggplot(ltre_var_vr, aes(x = par, y = rel_cont_esds, colour = type)) +
+  geom_errorbar(data = ltre_var_vr_sry, inherit.aes = FALSE, 
+                aes(x = par, ymin = lwr_95, ymax = upr_95, colour = type),
+                width = 0) +
+  geom_errorbar(data = ltre_var_vr_sry, inherit.aes = FALSE,
+                aes(x = par, ymin = lwr_50, ymax = upr_50, colour = type),
+                width = 0, linewidth = 1.5) +
+  geom_point(data = ltre_var_vr_sry, inherit.aes = FALSE,
+             aes(x = par, y = mdn, colour = type), size = 3) +
+  geom_vline(xintercept = 4.5, linetype = "dashed", linewidth = 0.25, colour = "gray75") +
+  annotate("text", x = 0.65, y = 0.8, label = "(a)", size = 6) +
+  xlab(NULL) +
+  ylab(NULL) +
+  scale_x_discrete(labels = c(bquote(gamma), bquote(phi[1]), bquote(phi[2]),
+                              bquote(phi[3]),
+                              bquote(M[1]), bquote(M[2]), bquote(M[3]))) +
+  scale_colour_manual(values = c("#fd8d3c", "#6baed6")) +
+  scale_y_continuous(breaks = seq(0, 0.85, 0.1)) +
+  guides(fill = guide_legend(label.position = "left", label.hjust = 1)) +
+  theme_bw() +
+  theme(legend.title = element_blank(),
+        legend.background = element_blank(),
+        legend.position = "inside",
+        legend.position.inside = c(0.925, 0.95),
+        legend.justification = 0.75,
+        legend.text = element_text(size = 14),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        axis.text.x = element_text(size = 14),
+        axis.text.y = element_text(size = 14),
+        axis.title.x = element_text(size = 16, margin = margin(t = 12)),
+        axis.title.y = element_text(size = 16, margin = margin(r = 12)))
+
+
+# Variabilitby over time series by vital rate predictors (Knape et al 2023)
+
+ltre_var_ep <- bind_rows(readRDS(here("outputs/output_ltre_var_ep.rds"))$ltre) |>
+  # Remove alpha_gamma as well as psi1 and psi2 and related predictors and 
+  # environmental stochasticties as they don't contribute to variability in lambda.
+  filter(!(type_1 %in% c("Transition (size class 1 to 2)", 
+                         "Transition (size class 2 to 3)",
+                         "M1", "M2", "M3"))) |>
+  filter(par != "gamma_alpha") |>
+  mutate(par = factor(par, levels = c("gamma_tair", "gamma_dsch", 
+                                      "gamma_skt2", "gamma_dd", "gamma_est",
+                                      "phi1_tair", "phi1_skt2", "phi1_skt1", "phi1_dd",
+                                      "phi1_est", "phi2_tair", "phi2_skt2", "phi2_skt1",
+                                      "phi2_dd", "phi2_est", "phi3_tair", "phi3_skt2",
+                                      "phi3_skt1", "phi3_dd", "phi3_est")))
+
+ltre_var_ep_sry <- group_by(ltre_var_ep, par, type_1) |>
+  summarize(mdn = median(rel_cont_esds),
+            lwr_50 = hdi(rel_cont_esds, credMass = 0.5)[1],
+            upr_50 = hdi(rel_cont_esds, credMass = 0.5)[2],
+            lwr_95 = hdi(rel_cont_esds, credMass = 0.95)[1],
+            upr_95 = hdi(rel_cont_esds, credMass = 0.95)[2])
+
+plot_var_ep <- ggplot(ltre_var_ep, aes(x = par, y = rel_cont_esds)) +
+  geom_errorbar(data = ltre_var_ep_sry, inherit.aes = FALSE, 
+                aes(x = par, ymin = lwr_95, ymax = upr_95, colour = type_1),
+                width = 0) +
+  geom_errorbar(data = ltre_var_ep_sry, inherit.aes = FALSE,
+                aes(x = par, ymin = lwr_50, ymax = upr_50, colour = type_1),
+                width = 0, linewidth = 1.5) +
+  geom_point(data = ltre_var_ep_sry, inherit.aes = FALSE,
+             aes(x = par, y = mdn, colour = type_1), size = 3) +
+  xlab(NULL) +
+  ylab(NULL) +
+  scale_x_discrete(labels = c(bquote(beta[gamma][", tair"]), 
+                              bquote(beta[gamma][", dsch"]), 
+                              bquote(beta[gamma][", skt2"]),
+                              bquote(beta[gamma][", DD"]),
+                              bquote(epsilon[gamma]),
+                              rep(c(bquote(beta[phi][", tair"]), 
+                              bquote(beta[gamma][", skt2"]), 
+                              bquote(beta[phi][", skt1"]),
+                              bquote(beta[phi][", DD"]),
+                              bquote(epsilon[phi])), 3),
+                              bquote(M[1]), 
+                              bquote(M[2]), 
+                              bquote(M[3]))) +
+  scale_y_continuous(breaks = seq(0, 0.85, 0.1)) +
+  scale_colour_manual(values = c("#fd8d3c", brewer.pal(9, "Blues")[c(9, 5, 3)])) +
+  geom_vline(xintercept = 5.5, linetype = "dashed", linewidth = 0.25, colour = "gray75") +
+  geom_vline(xintercept = 10.5, linetype = "dashed", linewidth = 0.25, colour = "gray75") +
+  geom_vline(xintercept = 15.5, linetype = "dashed", linewidth = 0.25, colour = "gray75") +
+  annotate("text", x = 1.15, y = 0.8, label = "(b)", size = 6) +
+  theme_bw() +
+  theme(legend.title = element_blank(),
+        legend.background = element_blank(),
+        legend.box.background = element_blank(),
+        legend.position = "inside",
+        legend.position.inside = c(0.92, 0.88),
+        legend.justification = 0.75,
+        legend.text = element_text(size = 14),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        axis.text.x = element_text(size = 14, angle = 90, hjust = 1, vjust = 0.5),
+        axis.text.y = element_text(size = 14),
+        axis.title.x = element_text(size = 16, margin = margin(t = 12)),
+        axis.title.y = element_text(size = 16, margin = margin(r = 12)))
+
+grid.arrange(plot_var_vr, plot_var_ep, nrow = 2,
+             left = textGrob("Relative contribution", rot = 90, 
+                              gp = gpar(fontsize = 18)))
+```
+
+# Figure 8
+
+```{r}
+#| label: fig-8-ltre-difference
+#| message: false
+#| fig-cap: XXX
+#| echo: false
+#| fig-height: 14
+#| fig-width: 10
+
+# Difference between consecutive years by vital rate and population structure (Koons et al 2016)
+obs_diff_lam_es <- readRDS(here("outputs/output_ltre_diff.rds"))$diff_lam_es |>
+  summarize(mdn = median(diff),
+            .by = year) 
+
+plot_obs_diff <- ggplot(obs_diff_lam_es, aes(x = year, y = mdn)) +
+  geom_bar(stat = "identity", width = 0.75) +
+  scale_y_continuous(breaks = seq(-1.5, 1.5, 0.3)) +
+  scale_x_continuous(breaks = seq(1988, 2020, 2)) +
+  coord_cartesian(ylim = c(-1.6, 1.6)) +
+  annotate("text", x = 2020, y = 1.5, label = "(a)", size = 6) +
+  ylab(bquote("Observed "*Delta*lambda[t-1])) +
+  xlab(NULL) +
+  theme_bw() +
+  theme(panel.grid.major = element_line(linewidth = 0.1, colour = "gray90"),
+        panel.grid.minor = element_blank(),
+        axis.text.x = element_blank(),
+        axis.text.y = element_text(size = 12),
+        axis.title.y = element_text(size = 14, margin = margin(r = 12)))
+
+# Contributions to differences between consecutive years
+ltre_diff_vr <- bind_rows(readRDS(here("outputs/output_ltre_diff.rds"))$ltre_diff) |>
+  # Remove psi1 and psi2 and related predictors and environmental stochasticties 
+  # as they don't contribute to differences in lambda.
+  filter(!(type_1 %in% c("Transition (size class 1 to 2)", 
+                         "Transition (size class 2 to 3)"))) |>
+  mutate(par = factor(type_1, 
+                      levels = c("Productivity", "Survival (size class 1)",
+                                 "Survival (size class 2)", "Survival (size class 3)", 
+                                 "M1", "M2", "M3")),
+         type = factor(type_2, levels = c("Vital rate", "Population structure"))) |>
+  group_by(year, par, iter) |>
+  summarize(cont_es = sum(cont_es),
+            rel_cont_es = sum(rel_cont_es)) |>
+  group_by(year, par) |>
+  summarize(cont_es = median(cont_es),
+            rel_cont_es = median(rel_cont_es))
+  
+plot_apx_diff <- ggplot(ltre_diff_vr, aes(x = year, y = cont_es, fill = par)) +
+  geom_bar(position = "stack", stat = "identity", width = 0.75) +
+  annotate("text", x = 2020, y = 1.5, label = "(b)", size = 6) +
+  scale_fill_manual(values = c(rev(brewer.pal(4, "Blues")), rev(brewer.pal(3, "Oranges")), 
+                               rev(brewer.pal(6, "Greys"))), 
+                    labels = c(bquote(gamma), bquote(phi[1]), bquote(phi[2]),
+                               bquote(phi[3]), bquote(M[1]), bquote(M[2]),
+                               bquote(M[3]))) +
+  scale_y_continuous(breaks = seq(-1.5, 1.5, 0.3)) +
+  scale_x_continuous(breaks = seq(1988, 2020, 2)) +
+  coord_cartesian(ylim = c(-1.6, 1.6)) +
+  ylab(bquote("Approximated contibution to "*Delta*lambda[t-1])) + 
+  xlab(bquote("Year ("*italic(t-1)*")")) +
+  guides(fill = guide_legend(nrow = 4)) +
+  theme_bw() +
+  theme(legend.position = c(0.9, 0.15),
+        legend.title = element_blank(),
+        legend.text = element_text(size = 12),
+        panel.grid.major = element_line(linewidth = 0.1, colour = "gray90"),
+        panel.grid.minor = element_blank(),
+        axis.text.x = element_text(size = 12, angle = 90, vjust = 0.5),
+        axis.text.y = element_text(size = 12),
+        axis.title.x = element_text(size = 14, margin = margin(t = 12)),
+        axis.title.y = element_text(size = 14, margin = margin(r = 12)))
+
+grid.arrange(plot_obs_diff, plot_apx_diff, nrow = 2)
+```
+
+# Figure 9
+
+```{r}
+#| label: fig-9-ltre-geometric-mean
+#| message: false
+#| fig-cap: XXX
+#| echo: false
+#| fig-height: 14
+#| fig-width: 10
+
+# Plot showing median relative contribution
+ltre_lamg_vr <- tibble(readRDS(here("outputs/output_ltre_lamg.rds"))$cont) |>
+  group_by(par) |>
+  summarize(A_mu = median(contA_mu),
+            A_sig = median(contA_sig),
+            M_mu = median(contM_mu),
+            M_sig = median(contM_sig)) |> 
+  pivot_longer(A_mu:M_sig, names_to = "type", values_to = "cont") |>
+  mutate(rcont = abs(cont) / sum(abs(cont)))
+
+plot_rcont_lamg <- ggplot(ltre_lamg_vr, aes(x = par, y = rcont, fill = type)) +
+  geom_bar(position = "stack", stat = "identity", width = 0.25) +
+  annotate("text", x = 0.9, y = 0.5, label = "(a)", size = 6) +
+  xlab(NULL) +
+  ylab(bquote("Relative contribution to "*Delta~log~lambda[g])) +
+  scale_fill_manual(values = c("#d7191c", "#fdae61", "#abd9e9", "#2c7bb6"), 
+                    labels = c(bquote(A[mu]), bquote(A[sigma]), bquote(M[mu]),
+                               bquote(M[sigma]))) +
+  scale_x_discrete(labels = c(bquote(gamma), bquote(phi[1]), bquote(phi[2]),
+                              bquote(phi[3]), bquote(psi[1]), bquote(psi[2])),
+                   expand = c(0.05, 0.05)) +
+  scale_y_continuous(breaks = seq(0, 0.5, 0.1), expand = c(0, 0, 0.01, 0.01)) +
+  coord_cartesian(ylim = c(0, 0.5)) +
+  theme_bw() +
+  theme(legend.title = element_blank(),
+        legend.background = element_blank(),
+        legend.position = c(0.95, 0.90),
+        legend.justification = 0.75,
+        legend.text = element_text(size = 16),
+        panel.grid.major = element_line(linewidth = 0.1, colour = "gray90"),
+        panel.grid.minor = element_blank(),
+        axis.text.x = element_text(size = 14),
+        axis.text.y = element_text(size = 14),
+        axis.title.x = element_text(size = 16, margin = margin(t = 12)),
+        axis.title.y = element_text(size = 16, margin = margin(r = 12)))
+
+# Plot showing median and HPDI of contributions
+ltre_lamg_vr <- tibble(readRDS(here("outputs/output_ltre_lamg.rds"))$cont) |>
+  pivot_longer(contA_mu:contM_sig, names_to = "type", values_to = "cont") |>
+  group_by(par, type) |>
+  summarize(mdn = median(cont),
+            lwr_95 = hdi(cont, credMass = 0.95)[1],
+            upr_95 = hdi(cont, credMass = 0.95)[2],
+            lwr_50 = hdi(cont, credMass = 0.50)[1],
+            upr_50 = hdi(cont, credMass = 0.50)[2])
+
+plot_cont_lamg <- ggplot(ltre_lamg_vr) +
+  geom_errorbar(aes(x = par, ymin = lwr_95, ymax = upr_95,
+                    group = type, color = type), 
+                position = position_dodge(0.5), width = 0) +
+  geom_errorbar(aes(x = par, ymin = lwr_50, ymax = upr_50,
+                    group = type, color = type), 
+                position = position_dodge(0.5), width = 0, linewidth = 1.5) +
+  geom_point(aes(x = par, y = mdn, group = type, color = type), 
+             position = position_dodge(0.5), size = 3) +  
+  annotate("text", x = 0.60, y = 0.1, label = "(b)", size = 6) +
+  xlab(NULL) +
+  ylab(bquote("Contribution to "*Delta~log~lambda[g])) +
+  scale_colour_manual(values = c("#d7191c", "#fdae61", "#abd9e9", "#2c7bb6"), 
+                      labels = c(bquote(A[mu]), bquote(A[sigma]), bquote(M[mu]),
+                                 bquote(M[sigma]))) +
+  scale_x_discrete(labels = c(bquote(gamma), bquote(phi[1]), bquote(phi[2]),
+                              bquote(phi[3]), bquote(psi[1]), bquote(psi[2]))) +
+  theme_bw() +
+  theme(legend.title = element_blank(),
+        legend.background = element_blank(),
+        legend.position = c(0.95, 0.90),
+        legend.justification = 0.75,
+        legend.text = element_text(size = 16),
+        panel.grid.major = element_line(linewidth = 0.1, colour = "gray90"),
+        panel.grid.minor = element_blank(),
+        axis.text.x = element_text(size = 14),
+        axis.text.y = element_text(size = 14),
+        axis.title.x = element_text(size = 16, margin = margin(t = 12)),
+        axis.title.y = element_text(size = 16, margin = margin(r = 12)))
+
+gA <- ggplotGrob(plot_rcont_lamg)
+gB <- ggplotGrob(plot_cont_lamg)
+grid::grid.newpage()
+grid::grid.draw(rbind(gA, gB))
+```

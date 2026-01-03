@@ -1,0 +1,559 @@
+---
+title: "Check model fit"
+format: docx
+editor: visual
+execute:
+  echo: false
+params:
+  obs: "beta-binomial"
+  dd: "dd_all"
+---
+
+# Check R-hat
+
+```{r}
+#| label: setup
+#| message: false
+library(MCMCvis)
+library(tidyverse)
+library(bayesplot)
+library(truncnorm)
+library(here)
+library(DHARMa)
+
+out <- readRDS(here(paste0("outputs/spl_dat_nmix_", params$obs, "_", params$dd, ".rds")))
+
+spl_lst <- out$spl
+
+spl_df <- as.data.frame(do.call(rbind, spl_lst))
+  
+ns <- nrow(spl_df)
+  
+# Remove column for parameters that are not sampled.
+
+rm_par <- which(colnames(spl_lst[[1]]) %in% c("S[1, 1]", "S[2, 1]", "S[3, 1]",
+                                              "R[1, 1]", "R[2, 1]", "R[3, 1]",
+                                              "N[3, 30, 1]", "N[3, 30, 2]", "N[3, 30, 3]",
+                                              "N[3, 32, 1]", "N[3, 32, 2]", "N[3, 32, 3]"))
+
+for (c in 1:length(spl_lst)){
+  spl_lst[[c]] <- spl_lst[[c]][, -rm_par]
+}
+
+dat <- out$dat
+```
+
+# Check MCMC
+
+## Parameter $M$
+
+```{r}
+#| label: check-chains-M
+(mcmc_summary <- MCMCsummary(spl_lst, round = 2, params = c("M")))
+
+filter(mcmc_summary, Rhat > 1.1)
+
+# MCMCtrace(spl_lst, params = c("M"), 
+#           pdf = FALSE, Rhat = TRUE, post_zm = FALSE)
+
+if (length(rownames(filter(mcmc_summary, Rhat > 1.1))) > 0) {
+  MCMCtrace(spl_lst, params = rownames(filter(mcmc_summary, Rhat > 1.1)), 
+            pdf = FALSE, Rhat = TRUE, post_zm = FALSE, ISB = FALSE)
+}
+```
+
+## Parameter $S$
+
+```{r}
+#| label: check-chains-S
+(mcmc_summary <- MCMCsummary(spl_lst, round = 2, params = c("S")))
+
+filter(mcmc_summary, Rhat > 1.1)
+
+# MCMCtrace(spl_lst, params = c("S"), 
+#           pdf = FALSE, Rhat = TRUE, post_zm = FALSE)
+
+if (length(rownames(filter(mcmc_summary, Rhat > 1.1))) > 0) {
+  MCMCtrace(spl_lst, params = rownames(filter(mcmc_summary, Rhat > 1.1)), 
+            pdf = FALSE, Rhat = TRUE, post_zm = FALSE, ISB = FALSE)
+}
+```
+
+## Parameter $R$
+
+```{r}
+#| label: check-chains-R
+(mcmc_summary <- MCMCsummary(spl_lst, round = 2, params = c("R")))
+
+filter(mcmc_summary, Rhat > 1.1)
+
+# MCMCtrace(spl_lst, params = c("R"), 
+#           pdf = FALSE, Rhat = TRUE, post_zm = FALSE)
+
+if (length(rownames(filter(mcmc_summary, Rhat > 1.1))) > 0) {
+  MCMCtrace(spl_lst, params = rownames(filter(mcmc_summary, Rhat > 1.1)), 
+            pdf = FALSE, Rhat = TRUE, post_zm = FALSE, ISB = FALSE)
+}
+```
+
+## Parameter $\beta_\omega$
+
+```{r}
+#| label: check-chains-beta_omega
+(mcmc_summary <- MCMCsummary(spl_lst, round = 2, params = c("beta_omega")))
+
+pr <- rtruncnorm(ns,mean = 0, sd = 2.5, a = 0, b = Inf)
+
+MCMCtrace(spl_lst, params = c("beta_omega"), 
+          pdf = FALSE, Rhat = TRUE, priors = pr, post_zm = FALSE)
+
+```
+
+## Parameter $N$
+
+```{r}
+#| label: check-chains-N
+(mcmc_summary <- MCMCsummary(spl_lst, round = 2, params = c("N")))
+
+filter(mcmc_summary, Rhat > 1.1)
+
+if (length(rownames(filter(mcmc_summary, Rhat > 1.1))) > 0) {
+  MCMCtrace(spl_lst, params = rownames(filter(mcmc_summary, Rhat > 1.1)), 
+            pdf = FALSE, Rhat = TRUE, post_zm = FALSE, ISB = FALSE)
+}
+
+```
+
+## Parameters related to $\phi$
+
+```{r}
+#| label: check-chains-phi
+
+if (params$dd %in% c("dd_phi", "dd_all")) {
+  pars_phi <- c("beta0_phi", "beta_phi", "beta_phi_DD", "sig_phi")
+  
+  pr <- cbind(matrix(rnorm(12 * ns, 0, 2.5), ncol = 12), 
+              matrix(rtruncnorm(3 * ns, mean = 0, sd = 0.1, a = 0, b = Inf), ncol = 3),
+              matrix(rtruncnorm(3 * ns, mean = 0, sd = 2.5, a = 0, b = Inf), ncol = 3))
+} else {
+  pars_phi <- c("beta0_phi", "beta_phi", "sig_phi")
+
+  pr <- cbind(matrix(rnorm(12 * ns, 0, 2.5), ncol = 12), 
+              matrix(rtruncnorm(3 * ns, mean = 0, sd = 2.5, a = 0, b = Inf), ncol = 3))
+}
+
+(mcmc_summary <- MCMCsummary(spl_lst, round = 2, params = pars_phi))
+
+filter(mcmc_summary, Rhat > 1.1)
+
+MCMCtrace(spl_lst, params = pars_phi, priors = pr,
+          pdf = FALSE, Rhat = TRUE, post_zm = FALSE)
+
+# IVS 
+MCMCsummary(spl_lst, round = 2, params = c("z_phi", "zeta_phi"))
+
+MCMCtrace(spl_lst, params = c("z_phi", "zeta_phi"), 
+          pdf = FALSE, Rhat = TRUE, post_zm = FALSE)
+
+# eps_phi
+filter(MCMCsummary(spl_lst, round = 2, params = "eps_phi"), Rhat > 1.1)
+```
+
+## Parameters related to $\gamma$
+
+```{r}
+#| label: check-chains-gamma
+
+if (params$dd %in% c("dd_gamma", "dd_all")) {
+  pars_gamma <- c("alpha_gamma", "beta_gamma", "beta_gamma_DD", "sig_gamma")
+  
+  pr <- cbind(rtruncnorm(ns, mean = 1, sd = 1, a = 1, b = Inf),
+              matrix(rnorm(3 * ns, 0, 2.5), ncol = 3), 
+              rtruncnorm(ns, mean = 0, sd = 0.1, a = 0, b = Inf),
+              rtruncnorm(ns, mean = 0, sd = 2.5, a = 0, b = Inf))
+} else {
+  pars_gamma <- c("alpha_gamma", "beta_gamma", "sig_gamma")
+  
+  pr <- cbind(rtruncnorm(ns, mean = 1, sd = 1, a = 1, b = Inf),
+              matrix(rnorm(3 * ns, 0, 2.5), ncol = 3), 
+              rtruncnorm(ns, mean = 0, sd = 2.5, a = 0, b = Inf))
+}
+
+(mcmc_summary <- MCMCsummary(spl_lst, round = 2, params = pars_gamma))
+
+filter(mcmc_summary, Rhat > 1.1)
+
+MCMCtrace(spl_lst, params = pars_gamma, priors = pr, pdf = FALSE, 
+          Rhat = TRUE, post_zm = FALSE)
+
+# IVS
+MCMCsummary(spl_lst, round = 2, params = c("z_gamma", "zeta_gamma"))
+
+MCMCtrace(spl_lst, params = c("z_gamma", "zeta_gamma"), pdf = FALSE, 
+          Rhat = TRUE, post_zm = FALSE)
+
+# eps_gamma
+filter(MCMCsummary(spl_lst, round = 2, params = "eps_gamma"), Rhat > 1.1)
+```
+
+## Parameters related to $p$
+
+```{r}
+#| label: check-chains-p
+
+pars_p <- c("beta0_p", "beta_p", "sig_p")
+
+(mcmc_summary <- MCMCsummary(spl_lst, round = 2, params = pars_p))
+
+print(filter(mcmc_summary, Rhat > 1.1))
+
+pr <- cbind(matrix(rnorm(ns * 5, 0, 2.5), ncol = 5),
+            rtruncnorm(ns, a = 0, mean = 1, sd = 2.5))
+
+MCMCtrace(spl_lst, params = rownames(mcmc_summary), priors = pr, 
+          pdf = FALSE, Rhat = TRUE, post_zm = FALSE, ISB = FALSE)
+
+
+# IVS 
+MCMCsummary(spl_lst, round = 2, params = c("z_p", "zeta_p"))
+
+MCMCtrace(spl_lst, params = c("z_p", "zeta_p"), 
+          pdf = FALSE, Rhat = TRUE, post_zm = FALSE)
+
+# eps_p
+print(filter(MCMCsummary(spl_lst, round = 2, params = "eps_p"), Rhat > 1.1))
+
+
+# Other beta-binomial parameters
+if (params$obs == "beta-binomial") {
+  print(filter(MCMCsummary(spl_lst, round = 2, params = "theta_p"), Rhat > 1.1))
+  
+  print(filter(MCMCsummary(spl_lst, round = 2, params = "alpha_B"), Rhat > 1.1))
+  
+  print(filter(MCMCsummary(spl_lst, round = 2, params = "beta_B"), Rhat > 1.1))
+}
+```
+
+# Bayesian p-value
+
+```{r}
+#| label: bayesian-p-value-n-mixture
+#| warning: false
+
+not_na <- which(!is.na(as.vector(dat$Y)))
+
+Y_obs <- as.vector(dat$Y)[not_na]  
+
+Y_obs <- matrix(Y_obs, nrow = ns, ncol = length(Y_obs), byrow = TRUE)
+
+Y_rep <- select(spl_df, starts_with("Y_rep"))[, not_na]
+
+Y_exp <- select(spl_df, starts_with("Y_exp"))[, not_na]
+
+N <- select(spl_df, starts_with("N["))
+
+N <- cbind(N, N, N)
+
+N <- N[, order(colnames(N))][, not_na]
+
+if (params$obs == "binomial" | params$obs == "beta-binomial") {
+
+  Y_dres_obs_tmp <- as.matrix((N - Y_obs) * log((N - Y_obs) / (N - Y_exp)))
+    
+  Y_dres_obs_tmp[which(is.nan(Y_dres_obs_tmp))] <- 0
+    
+  Y_dres_obs <- sign(Y_obs - Y_exp) * sqrt(2 * (Y_obs * log(Y_obs / Y_exp) + 
+                            Y_dres_obs_tmp))
+    
+  Y_dres_rep_tmp <- as.matrix((N - Y_rep) * log((N - Y_rep) / (N - Y_exp)))
+    
+  Y_dres_rep_tmp[which(is.nan(Y_dres_rep_tmp))] <- 0
+    
+  Y_dres_rep <- sign(Y_rep - Y_exp) * sqrt(2 * (Y_rep * log(Y_rep / Y_exp) + 
+                            Y_dres_rep_tmp))
+    
+  Y_obs_dev <- rowSums(Y_dres_obs, na.rm = TRUE)
+    
+  Y_rep_dev <- rowSums(Y_dres_rep, na.rm = TRUE)
+
+} else if (params$obs == "poisson") {
+  
+  Y_dres_obs <- sign(Y_obs - Y_exp) * sqrt(2 * (Y_obs * log(Y_obs / Y_exp) - (Y_obs - Y_exp)))
+  
+  Y_dres_rep <- sign(Y_rep - Y_exp) * sqrt(2 * (Y_rep * log(Y_rep / Y_exp) - (Y_rep - Y_exp)))
+  
+  Y_obs_dev <- rowSums(Y_dres_obs, na.rm = TRUE)
+  
+  Y_rep_dev <- rowSums(Y_dres_rep, na.rm = TRUE)
+  
+}
+
+tibble(Y_obs_dev = Y_obs_dev,
+       Y_rep_dev = Y_rep_dev) |>
+  ggplot(aes(x = Y_obs_dev, y = Y_rep_dev)) +
+    geom_point(colour = "lightblue", alpha = 0.4) +
+    geom_abline(intercept = 0, slope = 1, linetype = "dashed", colour = "gray") +
+    xlab("Deviance of observed data") +
+    ylab("Deviance of simulated data") +
+    theme_bw() +
+    theme(panel.grid = element_blank())
+
+round(mean(Y_rep_dev > Y_obs_dev, na.rm = TRUE), 2)
+```
+
+# Quantile residual checks
+
+```{r}
+#| label: quantile-residuals-n-mixture
+
+not_na <- which(!is.na(as.vector(dat$Y)))
+
+Y_obs <- as.vector(dat$Y)[not_na]  
+
+Y_rep <- select(spl_df, starts_with("Y_rep"))[, not_na]
+
+Y_exp <- select(spl_df, starts_with("Y_exp"))[, not_na]
+
+qres <- createDHARMa(simulatedResponse = t(Y_rep), observedResponse = Y_obs, fittedPredictedResponse = colMeans(Y_exp), integerResponse = FALSE)
+
+tibble(observed = sort(qres$scaledResiduals),
+       expected = ppoints(length(qres$scaledResiduals))) |> 
+  ggplot(aes(x = expected, y = observed)) +
+    geom_point(colour = "lightblue") +
+    geom_abline(intercept = 0, slope = 1, linetype = "dashed", color = "black") +
+    labs(x = "Expected quantiles",
+         y = "Observed quantiles") +
+    theme_bw() +
+    theme(panel.grid = element_blank())
+
+tibble(residuals = qres$scaledResiduals,
+       fitted = qres$fittedPredictedResponse,
+       fitted_rank = rank(qres$fittedPredictedResponse, ties.method = "average") / length(qres$fittedPredictedResponse)) |>
+  ggplot(aes(x = fitted_rank, y = residuals)) +
+    geom_point(colour = "lightblue") +
+    geom_hline(yintercept = 0.25, linetype = "dashed", color = "gray") + 
+    geom_hline(yintercept = 0.5, linetype = "dashed", color = "gray") + 
+    geom_hline(yintercept = 0.75, linetype = "dashed", color = "gray") + 
+    labs(x = "Fitted values (rank transformed)",
+         y = "Scaled residuals") +
+    theme_bw() +
+    theme(panel.grid = element_blank())
+```
+
+# Posterior predictive checks
+
+```{r}
+#| label: pp-check-n-mixture
+#| message: false
+
+not_na <- which(!is.na(as.vector(dat$Y)))
+
+Y_obs <- as.vector(dat$Y)[not_na]
+
+Y_rep <-  as.matrix(select(spl_df, starts_with("Y_rep"))[, not_na])
+
+ppc_dens_overlay(Y_obs, Y_rep) + 
+  xlab("Fish count") +
+  ylab("Probability density") +
+  theme_bw() +
+  theme(legend.position = "top")
+
+ppc_stat(Y_obs, Y_rep, stat = "mean") + 
+  xlab("Mean fish count") +
+  ylab("Frequency") +
+  theme_bw() +
+  theme(legend.position = "top")
+
+ppc_stat(Y_obs, Y_rep, stat = "sd") + 
+  xlab("Mean fish count") +
+  ylab("Frequency") +
+  theme_bw() +
+  theme(legend.position = "top")
+
+ppc_stat(Y_obs, Y_rep, stat = "min") + 
+  xlab("Minimum fish count") +
+  ylab("Frequency") +
+  theme_bw() + 
+  theme(legend.position = "top")
+
+ppc_stat(Y_obs, Y_rep, stat = "max") + 
+  xlab("Maximum fish count") +
+  ylab("Frequency") +
+  theme_bw() +
+  theme(legend.position = "top")
+```
+
+# Size class transition model
+
+## Parameters $\beta_{0, \psi}$, $\beta_{\psi}$ and $\sigma_{\psi}$
+
+```{r}
+#| label: check-chains-size-beta0_psi-beta_psi-sig_psi
+
+pars_psi <- c("beta0_psi", "beta_psi", "sig_psi")
+
+(mcmc_summary <- MCMCsummary(spl_lst, round = 2, params = pars_psi))
+
+filter(mcmc_summary, Rhat > 1.1)
+
+pr <- cbind(matrix(rnorm(5 * ns, 0, 2.5), ncol = 5),
+             rtruncnorm(ns, mean = 0, sd = 2.5, a = 0, b = Inf))
+
+MCMCtrace(spl_lst, params = pars_psi,
+          pdf = FALSE, Rhat = TRUE, post_zm = FALSE, priors = pr)
+
+MCMCsummary(spl_lst, round = 2, params = c("z_psi", "zeta_psi"))
+
+# IVS 
+MCMCtrace(spl_lst, params = c("z_psi", "zeta_psi"),
+          pdf = FALSE, Rhat = TRUE, post_zm = FALSE, priors = pr)
+
+# eps_psi
+print(filter(MCMCsummary(spl_lst, round = 2, params = "eps_psi"), Rhat > 1.1))
+```
+
+## Parameter $\psi$
+
+```{r}
+#| label: check-chains-psi
+(mcmc_summary <- MCMCsummary(spl_lst, round = 2, params = "psi"))
+
+print(filter(mcmc_summary, Rhat > 1.1))
+
+# MCMCtrace(spl_lst, params = "psi", pdf = FALSE, Rhat = TRUE)
+
+if (length(rownames(filter(mcmc_summary, Rhat > 1.1))) > 0) {
+  MCMCtrace(spl_lst, params = rownames(filter(mcmc_summary, Rhat > 1.1)), 
+            pdf = FALSE, Rhat = TRUE, post_zm = FALSE, ISB = FALSE)
+}
+```
+
+# Bayesian P-value
+
+```{r}
+#| label: bayesian-p-value-size-class-model
+#| warning: false
+
+# Formula for deviance residual taken from the book in the link below. 
+# NaNs generated are ignored. Author shows that the sum of the squared deviance residuals equals
+# the deviance of the model reported by package VGAM. 
+# https://bookdown.org/mpfoley1973/supervised-ml/generalized-linear-models-glm.html
+
+C_obs <- as_tibble(dat$C) |>
+  mutate(k = 1:n()) |>
+  pivot_longer(`1`:`9`, names_to = "l", values_to = "i_obs") |>
+  group_by(k) |>
+  mutate(l = as.numeric(l),
+         j_obs = lead(i_obs)) |>
+  ungroup() |>
+  arrange(k, l)
+
+C_rep <- select(spl_df, starts_with("C_rep")) |>
+    mutate(iter = 1:n()) |>
+    pivot_longer(starts_with("C_rep["), names_to = "idx", values_to = "i_rep") |>
+    mutate(k = as.numeric(str_extract_all(idx, "[[:digit:]]+", simplify = TRUE)[, 1]),
+           l = as.numeric(str_extract_all(idx, "[[:digit:]]+", simplify = TRUE)[, 2]),
+           i_rep = ifelse(i_rep == 0, NA, i_rep)) |>
+  group_by(k) |>
+  mutate(j_rep = lead(i_rep)) |>
+  ungroup() |>
+  arrange(iter, k, l)
+
+C_obs_rep <- left_join(C_rep, C_obs, by = join_by(k == k, l == l)) |>
+  select(iter, k, l, i_obs, j_obs, i_rep, j_rep) |>
+  arrange(iter, k, l)
+
+C_res <- select(spl_df, starts_with("Psi[", ignore.case = FALSE)) |>
+  mutate(iter = 1:n()) |>
+  pivot_longer(starts_with("Psi["), names_to = "idx", values_to = "psi") |>
+  mutate(i = as.numeric(str_extract_all(idx, "[[:digit:]]+", simplify = TRUE)[, 1]), # size class at current age
+         j = as.numeric(str_extract_all(idx, "[[:digit:]]+", simplify = TRUE)[, 2]), # size class at next age
+         k = as.numeric(str_extract_all(idx, "[[:digit:]]+", simplify = TRUE)[, 3]), # individual
+         l = as.numeric(str_extract_all(idx, "[[:digit:]]+", simplify = TRUE)[, 4])) |> # current age 
+  left_join(C_obs_rep, by = join_by(iter, k, l)) |>
+  drop_na() |> # keep only observed transitions in the data
+  filter(i == j | j - i == 1) |> # keep only possible transitions
+  arrange(iter, k, l) |>
+  mutate(C_obs_dev = sign((j_obs == j) - psi) * sqrt(-2 * (j_obs == j) * log(psi) +
+                                                       (1 - (j_obs == j)) * log(1 - psi)),
+         C_rep_dev = sign((j_rep == j) - psi) * sqrt(-2 * (j_rep == j) * log(psi) +
+                                                       (1 - (j_rep == j)) * log(1 - psi)))
+
+C_gof <- group_by(C_res, iter) |>
+  summarize(C_obs_fit = sum(C_obs_dev, na.rm = TRUE),
+            C_rep_fit = sum(C_rep_dev, na.rm = TRUE))
+
+ggplot(C_gof, aes(x = C_obs_fit, y = C_rep_fit)) +
+  geom_point(colour = "lightblue", alpha = 0.4) +
+  geom_abline(intercept = 0, slope = 1, linetype = "dashed", colour = "gray") +
+  xlab("Deviance of observed data") +
+  ylab("Deviance of simulated data") +
+  theme_bw() +
+  theme(panel.grid = element_blank())
+
+round(mean(C_gof$C_rep_fit > C_gof$C_obs_fit, na.rm = TRUE), 2)
+```
+
+# Quantile residual checks
+
+```{r}
+#| label: quantile-residuals-size-class-model
+
+not_na <- which(!is.na(as.vector(dat$C)))
+
+C_obs <- as.vector(dat$C)[not_na]
+
+C_rep <- as.matrix(select(spl_df, starts_with("C_rep["))[, not_na])
+
+qres <- createDHARMa(simulatedResponse = t(C_rep), observedResponse = C_obs, fittedPredictedResponse = colMeans(C_rep), integerResponse = TRUE)
+
+tibble(observed = sort(qres$scaledResiduals),
+       expected = ppoints(length(qres$scaledResiduals))) |> 
+ggplot(aes(x = expected, y = observed)) +
+  geom_point(colour = "lightblue") +
+  geom_abline(intercept = 0, slope = 1, linetype = "dashed", color = "black") +
+  labs(x = "Expected quantiles",
+       y = "Observed quantiles") +
+  theme_bw() +
+  theme(panel.grid = element_blank())
+
+tibble(residuals = qres$scaledResiduals,
+       fitted = qres$fittedPredictedResponse,
+       fitted_rank = rank(qres$fittedPredictedResponse, ties.method = "average") / (qres$fittedPredictedResponse)) |>
+ggplot(aes(x = fitted_rank, y = residuals)) +
+  geom_point(colour = "lightblue") +
+  geom_hline(yintercept = 0.25, linetype = "dashed", color = "gray") + 
+  geom_hline(yintercept = 0.5, linetype = "dashed", color = "gray") + 
+  geom_hline(yintercept = 0.75, linetype = "dashed", color = "gray") + 
+  labs(x = "Fitted values (rank transformed)",
+       y = "Scaled residuals") +
+  theme_bw() +
+  theme(panel.grid = element_blank())
+```
+
+# Posterior predictive checks
+
+```{r}
+#| label: pp-check-psi
+#| message: false
+
+not_na <- which(!is.na(as.vector(dat$C)))
+
+C_obs <- as.vector(dat$C)[not_na]
+
+C_rep <- as.matrix(select(spl_df, starts_with("C_rep["))[, not_na])
+
+ppc_bars(C_obs, C_rep, prob = 0.95) +
+  scale_x_continuous(breaks = 1:3, labels = 1:3) +
+  xlab("Size class") +
+  theme_bw() +
+  theme(legend.position = "top")
+
+ppc_stat(C_obs, C_rep, stat = "mean") + 
+  theme_bw() +
+  theme(legend.position = "top")
+
+ppc_stat(C_obs, C_rep, stat = "sd") + 
+  theme_bw() +
+  theme(legend.position = "top")
+```

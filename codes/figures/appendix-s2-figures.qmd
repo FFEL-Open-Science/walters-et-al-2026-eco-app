@@ -1,0 +1,998 @@
+---
+title: "Appendix S2 Figures"
+format: html
+editor: visual
+params:
+  obs: "beta-binomial"
+  dd: "dd_all"
+---
+
+```{r}
+#| label: setup
+#| message: false
+#| echo: false
+library(tidyverse)
+library(HDInterval)
+library(ggfan)
+library(RColorBrewer)
+library(gridExtra)
+library(here)
+
+out <- readRDS(here("outputs/spl_dat_nmix_beta-binomial_dd_all.rds"))
+spl_df <- as.data.frame(do.call(rbind, out$spl))
+dat <- out$dat
+cnt <- out$cnt
+ns <- nrow(spl_df)
+```
+
+# Figure AS2-S1
+
+```{r}
+#| label: appx-s2-fig-s1
+#| warning: false
+#| message: false
+#| fig-cap: XXX
+#| fig-height: 8
+#| fig-width: 8
+#| echo: false
+
+# Formula for deviance residual taken from the book in the link below. 
+# NaNs generated are ignored. Author shows that the sum of the squared deviance residuals equals
+# the deviance of the model reported by package VGAM. 
+# https://bookdown.org/mpfoley1973/supervised-ml/generalized-linear-models-glm.html
+
+C_obs <- as_tibble(dat$C) |>
+  mutate(k = 1:n()) |>
+  pivot_longer(`1`:`9`, names_to = "l", values_to = "i_obs") |>
+  group_by(k) |>
+  mutate(l = as.numeric(l),
+         j_obs = lead(i_obs)) |>
+  ungroup() |>
+  arrange(k, l)
+
+C_rep <- select(spl_df, starts_with("C_rep")) |>
+    mutate(iter = 1:n()) |>
+    pivot_longer(starts_with("C_rep["), names_to = "idx", values_to = "i_rep") |>
+    mutate(k = as.numeric(str_extract_all(idx, "[[:digit:]]+", simplify = TRUE)[, 1]),
+           l = as.numeric(str_extract_all(idx, "[[:digit:]]+", simplify = TRUE)[, 2]),
+           i_rep = ifelse(i_rep == 0, NA, i_rep)) |>
+  group_by(k) |>
+  mutate(j_rep = lead(i_rep)) |>
+  ungroup() |>
+  arrange(iter, k, l)
+
+C_obs_rep <- left_join(C_rep, C_obs, by = join_by(k == k, l == l)) |>
+  select(iter, k, l, i_obs, j_obs, i_rep, j_rep) |>
+  arrange(iter, k, l)
+
+C_res <- select(spl_df, starts_with("Psi[", ignore.case = FALSE)) |>
+  mutate(iter = 1:n()) |>
+  pivot_longer(starts_with("Psi["), names_to = "idx", values_to = "psi") |>
+  mutate(i = as.numeric(str_extract_all(idx, "[[:digit:]]+", simplify = TRUE)[, 1]), # size class at current age
+         j = as.numeric(str_extract_all(idx, "[[:digit:]]+", simplify = TRUE)[, 2]), # size class at next age
+         k = as.numeric(str_extract_all(idx, "[[:digit:]]+", simplify = TRUE)[, 3]), # individual
+         l = as.numeric(str_extract_all(idx, "[[:digit:]]+", simplify = TRUE)[, 4])) |> # current age 
+  left_join(C_obs_rep, by = join_by(iter, k, l)) |>
+  drop_na() |> # keep only observed transitions in the data
+  filter(i == j | j - i == 1) |> # keep only possible transitions
+  arrange(iter, k, l) |>
+  mutate(C_obs_dev = sign((j_obs == j) - psi) * sqrt(-2 * (j_obs == j) * log(psi) +
+                                                       (1 - (j_obs == j)) * log(1 - psi)),
+         C_rep_dev = sign((j_rep == j) - psi) * sqrt(-2 * (j_rep == j) * log(psi) +
+                                                       (1 - (j_rep == j)) * log(1 - psi)))
+
+C_gof <- group_by(C_res, iter) |>
+  summarize(C_obs_fit = sum(C_obs_dev, na.rm = TRUE),
+            C_rep_fit = sum(C_rep_dev, na.rm = TRUE))
+
+ggplot(C_gof, aes(x = C_obs_fit, y = C_rep_fit)) +
+  geom_point(colour = "lightblue", alpha = 0.4) +
+  geom_abline(intercept = 0, slope = 1, linetype = "dashed", colour = "gray") +
+  xlab("Deviance of observed data") +
+  ylab("Deviance of simulated data") +
+  theme_bw() +
+  theme(panel.grid = element_blank())
+```
+
+# Figure AS2-S2
+
+```{r}
+#| label: appx-s2-fig-s2
+#| warning: false
+#| message: false
+#| fig-cap: XXX
+#| fig-height: 7
+#| fig-width: 5
+#| echo: false
+
+not_na <- which(!is.na(as.vector(dat$C)))
+
+C_obs <- as.vector(dat$C)[not_na]
+
+C_rep <- as.matrix(select(spl_df, starts_with("C_rep["))[, not_na])
+
+qres <- createDHARMa(simulatedResponse = t(C_rep), observedResponse = C_obs, fittedPredictedResponse = colMeans(C_rep), integerResponse = TRUE)
+
+A <- tibble(observed = sort(qres$scaledResiduals),
+       expected = ppoints(length(qres$scaledResiduals))) |> 
+ggplot(aes(x = expected, y = observed)) +
+  geom_point(colour = "lightblue") +
+  geom_abline(intercept = 0, slope = 1, linetype = "dashed", color = "black") +
+  annotate("text", x = 0, y = 0.99, label = "(a)", size = 4) +
+  labs(x = "Expected quantiles",
+       y = "Observed quantiles") +
+  theme_bw() +
+  theme(panel.grid = element_blank())
+
+B <- tibble(residuals = qres$scaledResiduals,
+       fitted = qres$fittedPredictedResponse,
+       fitted_rank = rank(qres$fittedPredictedResponse, ties.method = "average") / (qres$fittedPredictedResponse)) |>
+ggplot(aes(x = fitted_rank, y = residuals)) +
+  geom_point(colour = "lightblue") +
+  geom_hline(yintercept = 0.25, linetype = "dashed", color = "gray") + 
+  geom_hline(yintercept = 0.5, linetype = "dashed", color = "gray") + 
+  geom_hline(yintercept = 0.75, linetype = "dashed", color = "gray") + 
+  annotate("text", x = 40, y = 0.99, label = "(b)", size = 4) +
+  labs(x = "Fitted values (rank transformed)",
+       y = "Scaled residuals") +
+  theme_bw() +
+  theme(panel.grid = element_blank())
+
+grid.arrange(A, B, nrow = 2)
+```
+
+# Figure AS2-S3
+
+```{r}
+#| label: appx-s2-fig-s2
+#| warning: false
+#| message: false
+#| fig-cap: XXX
+#| fig-height: 10
+#| fig-width: 10
+#| echo: false
+
+not_na <- which(!is.na(as.vector(dat$C)))
+
+C_obs <- as.vector(dat$C)[not_na]
+
+C_rep <- as.matrix(select(spl_df, starts_with("C_rep["))[, not_na])
+
+A <- ppc_bars(C_obs, C_rep, prob = 0.95) +
+  scale_x_continuous(breaks = 1:3, labels = 1:3) +
+  annotate("text", x = 3.4, y = 195, label = "(a)", size = 5) +
+  xlab("Size class") +
+  theme_bw() +
+  theme(legend.position = "top")
+
+B <- ppc_stat(C_obs, C_rep, stat = "mean") + 
+  annotate("text", x = 1.76, y = 395, label = "(b)", size = 5) +
+  coord_cartesian(ylim = c(0, 420)) + # prevents plot from moving when adding (b)
+  theme_bw() +
+  theme(legend.position = "top")
+
+C <- ppc_stat(C_obs, C_rep, stat = "sd") + 
+  annotate("text", x = 0.68, y = 395, label = "(c)", size = 5) +
+  theme_bw() +
+  theme(legend.position = "top")
+
+grid.arrange(A, B, C, nrow = 2)
+```
+
+# Figure AS2-S4
+
+```{r}
+#| label: appx-s2-fig-s4
+#| warning: false
+#| message: false
+#| fig-cap: XXX
+#| echo: false
+
+not_na <- which(!is.na(as.vector(dat$Y)))
+
+Y_obs <- as.vector(dat$Y)[not_na]  
+
+Y_obs <- matrix(Y_obs, nrow = ns, ncol = length(Y_obs), byrow = TRUE)
+
+Y_rep <- select(spl_df, starts_with("Y_rep"))[, not_na]
+
+Y_exp <- select(spl_df, starts_with("Y_exp"))[, not_na]
+
+N <- select(spl_df, starts_with("N["))
+
+N <- cbind(N, N, N)
+
+N <- N[, order(colnames(N))][, not_na]
+
+if (params$obs == "binomial" | params$obs == "beta-binomial") {
+
+  Y_dres_obs_tmp <- as.matrix((N - Y_obs) * log((N - Y_obs) / (N - Y_exp)))
+    
+  Y_dres_obs_tmp[which(is.nan(Y_dres_obs_tmp))] <- 0
+    
+  Y_dres_obs <- sign(Y_obs - Y_exp) * sqrt(2 * (Y_obs * log(Y_obs / Y_exp) + 
+                            Y_dres_obs_tmp))
+    
+  Y_dres_rep_tmp <- as.matrix((N - Y_rep) * log((N - Y_rep) / (N - Y_exp)))
+    
+  Y_dres_rep_tmp[which(is.nan(Y_dres_rep_tmp))] <- 0
+    
+  Y_dres_rep <- sign(Y_rep - Y_exp) * sqrt(2 * (Y_rep * log(Y_rep / Y_exp) + 
+                            Y_dres_rep_tmp))
+    
+  Y_obs_dev <- rowSums(Y_dres_obs, na.rm = TRUE)
+    
+  Y_rep_dev <- rowSums(Y_dres_rep, na.rm = TRUE)
+
+} else if (params$obs == "poisson") {
+  
+  Y_dres_obs <- sign(Y_obs - Y_exp) * sqrt(2 * (Y_obs * log(Y_obs / Y_exp) - (Y_obs - Y_exp)))
+  
+  Y_dres_rep <- sign(Y_rep - Y_exp) * sqrt(2 * (Y_rep * log(Y_rep / Y_exp) - (Y_rep - Y_exp)))
+  
+  Y_obs_dev <- rowSums(Y_dres_obs, na.rm = TRUE)
+  
+  Y_rep_dev <- rowSums(Y_dres_rep, na.rm = TRUE)
+  
+}
+
+tibble(Y_obs_dev = Y_obs_dev,
+       Y_rep_dev = Y_rep_dev) |>
+  ggplot(aes(x = Y_obs_dev, y = Y_rep_dev)) +
+    geom_point(colour = "lightblue", alpha = 0.4) +
+    geom_abline(intercept = 0, slope = 1, linetype = "dashed", colour = "gray") +
+    xlab("Deviance of observed data") +
+    ylab("Deviance of simulated data") +
+    theme_bw() +
+    theme(panel.grid = element_blank())
+```
+
+# Figure AS2-S5
+
+```{r}
+#| label: appx-s2-fig-s5
+#| warning: false
+#| message: false
+#| fig-cap: XXX
+#| fig-height: 7
+#| fig-width: 5
+#| echo: false
+
+not_na <- which(!is.na(as.vector(dat$Y)))
+
+Y_obs <- as.vector(dat$Y)[not_na]  
+
+Y_rep <- select(spl_df, starts_with("Y_rep"))[, not_na]
+
+Y_exp <- select(spl_df, starts_with("Y_exp"))[, not_na]
+
+qres <- createDHARMa(simulatedResponse = t(Y_rep), observedResponse = Y_obs, fittedPredictedResponse = colMeans(Y_exp), integerResponse = FALSE)
+
+A <- tibble(observed = sort(qres$scaledResiduals),
+       expected = ppoints(length(qres$scaledResiduals))) |> 
+  ggplot(aes(x = expected, y = observed)) +
+    geom_point(colour = "lightblue") +
+    geom_abline(intercept = 0, slope = 1, linetype = "dashed", color = "black") +
+    annotate("text", x = 0, y = 0.99, label = "(a)", size = 4) +
+    labs(x = "Expected quantiles",
+         y = "Observed quantiles") +
+    theme_bw() +
+    theme(panel.grid = element_blank())
+
+B <- tibble(residuals = qres$scaledResiduals,
+       fitted = qres$fittedPredictedResponse,
+       fitted_rank = rank(qres$fittedPredictedResponse, ties.method = "average") / length(qres$fittedPredictedResponse)) |>
+  ggplot(aes(x = fitted_rank, y = residuals)) +
+    geom_point(colour = "lightblue") +
+    geom_hline(yintercept = 0.25, linetype = "dashed", color = "gray") + 
+    geom_hline(yintercept = 0.5, linetype = "dashed", color = "gray") + 
+    geom_hline(yintercept = 0.75, linetype = "dashed", color = "gray") + 
+    annotate("text", x = 0, y = 0.99, label = "(b)", size = 4) +
+    labs(x = "Fitted values (rank transformed)",
+         y = "Scaled residuals") +
+    theme_bw() +
+    theme(panel.grid = element_blank())
+
+grid.arrange(A, B, nrow = 2)
+```
+
+# Figure AS2-S6
+
+```{r}
+#| label: appx-s2-fig-s6
+#| warning: false
+#| message: false
+#| fig-cap: XXX
+#| echo: false
+#| fig-height: 15
+#| fig-width: 10
+
+not_na <- which(!is.na(as.vector(dat$Y)))
+
+Y_obs <- as.vector(dat$Y)[not_na]
+
+Y_rep <-  as.matrix(select(spl_df, starts_with("Y_rep"))[, not_na])
+
+A <- ppc_dens_overlay(Y_obs, Y_rep) + 
+  xlab("Fish count") +
+  ylab("Probability density") +
+  annotate("text", x = 2300, y = 0.00225, label = "(a)", size = 5) +
+  theme_bw() +
+  theme(legend.position = "top")
+
+B <- ppc_stat(Y_obs, Y_rep, stat = "mean") + 
+  annotate("text", x = 292, y = 410, label = "(b)", size = 5) +
+  xlab("Mean fish count") +
+  ylab("Frequency") +
+  theme_bw() +
+  theme(legend.position = "top")
+
+C <- ppc_stat(Y_obs, Y_rep, stat = "sd") + 
+  annotate("text", x = 278, y = 420, label = "(c)", size = 5) +
+  xlab("Standard deviation of fish count") +
+  ylab("Frequency") +
+  theme_bw() + 
+  theme(legend.position = "top")
+
+D <- ppc_stat(Y_obs, Y_rep, stat = "min") + 
+  annotate("text", x = 15, y = 700, label = "(d)", size = 5) +
+  xlab("Minimum fish count") +
+  ylab("Frequency") +
+  theme_bw() + 
+  theme(legend.position = "top")
+
+E <- ppc_stat(Y_obs, Y_rep, stat = "max") + 
+  annotate("text", x = 2450, y = 420, label = "(e)", size = 5) +
+  xlab("Maximum fish count") +
+  ylab("Frequency") +
+  theme_bw() +
+  theme(legend.position = "top")
+
+grid.arrange(A, B, C, D, E, nrow = 3)
+```
+
+# Figure AS2-S7
+
+```{r}
+#| label: appx-s2-fig-s7
+#| message: false
+#| fig-cap: XXX
+#| echo: false
+#| fig-height: 8
+#| fig-width: 8
+
+M_int_spl <- select(spl_df, starts_with("M_int[")) |>
+  mutate(iter = 1:n()) |>
+  pivot_longer(starts_with("M_int"), names_to = "idx", values_to = "M_int") |>
+  mutate(c = as.numeric(str_extract_all(idx, "[[:digit:]]+", simplify = TRUE)[, 1]),
+         t = as.numeric(str_extract_all(idx, "[[:digit:]]+", simplify = TRUE)[, 2]),
+         year = 1987 + t,
+         size_class = case_when(c == 1 ~ "Size class 1 (10-30cm)",
+                                c == 2 ~ "Size class 2 (30-50cm)",
+                                c == 3 ~ "Size class 3 (50+cm)"))
+
+M_int_sry <- group_by(M_int_spl, iter, t, year) |>
+  summarize(M_int = sum(M_int)) |>
+  group_by(t, year)|>
+  summarize(mdn = median(M_int),
+            lwr = hdi(M_int, credMass = 0.95)[1], 
+            upr = hdi(M_int, credMass = 0.95)[2])
+
+ggplot(M_int_sry, aes(x = year)) +
+  geom_point(aes(y = mdn)) +
+  geom_errorbar(aes(ymin = lwr, ymax = upr), width = 0, linewidth = 0.25) +
+  geom_smooth(aes(y = mdn), se = FALSE, colour = "lightblue") +
+  scale_x_continuous(breaks = seq(1988, 2022, 2)) +  
+  scale_y_continuous(expand = c(0.0, 0.05), breaks = seq(0, 6500, 500)) +
+  coord_cartesian(ylim = c(0, 7000)) +
+  xlab("Year") +
+  ylab("Total population size") +
+  theme_bw() +
+  theme(panel.grid = element_blank())
+```
+
+# Figure AS2-S8
+
+```{r}
+#| label: appx-s2-fig-s8
+#| message: false
+#| fig-cap: XXX
+#| echo: false
+#| fig-height: 6
+#| fig-width: 8
+
+omega_dis <- select(spl_df, starts_with("beta_omega")) |>
+  mutate(iter = 1:n()) |>
+  pivot_longer(starts_with("beta_omega"), names_to = "idx", values_to = "beta_omega") |>
+  select(beta_omega) |>
+  expand(beta_omega, 
+         clen = seq(min(dat$d, na.rm = TRUE), max(dat$d, na.rm = TRUE), length.out = 100)) |>
+  mutate(omega = exp(-beta_omega / clen))
+
+clen <- sort(na.exclude(unique(as.vector(dat$d))))
+
+ggplot(omega_dis, aes(x = clen, y = omega)) +
+  geom_vline(xintercept = clen[1], linetype = "dashed", size = 0.25, colour = "gray75") +
+  geom_vline(xintercept = clen[2], linetype = "dashed", size = 0.25, colour = "gray75") +
+  geom_vline(xintercept = clen[3], linetype = "dashed", size = 0.25, colour = "gray75") +
+  geom_vline(xintercept = clen[4], linetype = "dashed", size = 0.25, colour = "gray75") +
+  geom_vline(xintercept = clen[5], linetype = "dashed", size = 0.25, colour = "gray75") +
+  geom_fan(show.legend = FALSE, intervals = seq(0, 1, 0.01)) +
+  ggfan::geom_interval(intervals = c(0, 0.5, 0.95)) +
+  xlab("Combined stream length (km)") +
+  ylab(bquote("Proportion of population available"~(omega))) +
+  scale_x_continuous(breaks = seq(10, 25, 2.5)) +
+  scale_y_continuous(breaks = seq(0, 1, 0.1)) +
+  coord_cartesian(ylim = c(0.4, 0.8)) +
+  scale_fill_gradientn(colours = rev(brewer.pal(n = 9, "Blues"))) +
+  theme_bw() +
+  theme(legend.position = "none",
+        panel.grid = element_blank(),
+        axis.text = element_text(size = 12),
+        axis.title.x = element_text(size = 14, margin = margin(t = 12)),
+        axis.title.y = element_text(size = 14, margin = margin(r = 12)))
+```
+
+# Figure AS2-S9
+
+```{r}
+#| label: appx-s2-fig-s9
+#| message: false
+#| fig-cap: XXX
+#| echo: false
+#| fig-height: 16
+#| fig-width: 10
+
+dat_daily_discharge <- readRDS(here("data/processed/daily_discharge.rds"))
+
+conditions <- read_csv(here("data/raw/conditions.csv")) %>%
+    select(-comment) %>%
+    left_join(dat_daily_discharge, by = "date") %>%
+    rename(discharge = discharge.x, discharge_wsc = discharge.y) |>
+    mutate(year = year(date)) |>
+    summarize(vis = mean(visibility, na.rm = TRUE),
+              dis = mean(discharge_wsc, na.rm = TRUE),
+              .by = year)
+
+coef_p <- cbind(select(spl_df, starts_with("beta0_p")),
+                select(spl_df, starts_with("z_p")),
+                select(spl_df, starts_with("beta_p")),
+                select(spl_df, starts_with("theta_p")))
+
+vis <- as.vector(scale(conditions$vis))
+
+dis <- as.vector(scale(conditions$dis))
+
+# Compute predictions by visibility (at mean discharge or dis = 0)
+p_vis <- coef_p |> 
+  expand(nesting(`beta0_p[1]`, `beta0_p[2]`, `beta0_p[3]`, 
+                 `z_p[1]`, `z_p[2]`, 
+                 `beta_p[1]`, `beta_p[2]`, 
+                 `theta_p[1]`, `theta_p[2]`, `theta_p[3]`),
+         vis = seq(min(vis), max(vis), 0.1)) |>
+  mutate(alpha_1 = plogis(`beta0_p[1]` + `z_p[1]` * `beta_p[1]` * vis) * `theta_p[1]`,
+         alpha_2 = plogis(`beta0_p[2]` + `z_p[1]` * `beta_p[1]` * vis) * `theta_p[2]`,
+         alpha_3 = plogis(`beta0_p[3]` + `z_p[1]` * `beta_p[1]` * vis) * `theta_p[3]`,
+         beta_1 = (1 - plogis(`beta0_p[1]` + `z_p[1]` * `beta_p[1]` * vis)) * `theta_p[1]`,
+         beta_2 = (1 - plogis(`beta0_p[2]` + `z_p[1]` * `beta_p[1]` * vis)) * `theta_p[2]`,
+         beta_3 = (1 - plogis(`beta0_p[3]` + `z_p[1]` * `beta_p[1]` * vis)) * `theta_p[3]`,
+         `Size class 1 (10-30cm)` = alpha_1 / (alpha_1 + beta_1),
+         `Size class 2 (30-50cm)` = alpha_2 / (alpha_2 + beta_2),
+         `Size class 3 (50+cm)` = alpha_3 / (alpha_3 + beta_3),
+         vis = vis * sd(conditions$vis) + mean(conditions$vis)) |>
+  pivot_longer(`Size class 1 (10-30cm)`:`Size class 3 (50+cm)`, 
+               names_to = "size_class", values_to = "p")
+
+let_vis <- tibble(size_class = c("Size class 1 (10-30cm)", 
+                                 "Size class 2 (30-50cm)", 
+                                 "Size class 3 (50+cm)"),
+                  label = c("(a)", "(b)", "(c)"))
+
+# Plot detection probability by visibility
+plot_vis <- ggplot(p_vis, aes(x = vis, y = p)) +
+  geom_fan(show.legend = FALSE, intervals = seq(0, 1, 0.01)) +
+  ggfan::geom_interval(intervals = c(0, 0.5, 0.95)) +
+  geom_text(data = let_vis, aes(x = 3.25, y = 1, label = label, size = 14)) +
+  xlab("Visibility (m)") +
+  ylab("Detection probability") +
+  coord_cartesian(ylim = c(0, 1)) +
+  scale_fill_gradientn(colours = rev(brewer.pal(n = 9, "Blues"))) +
+  facet_wrap(~ size_class) +
+  theme_bw() +
+  theme(legend.position = "none",
+        panel.grid = element_blank(),
+        axis.text = element_text(size = 12),
+        axis.title.x = element_text(size = 14, margin = margin(t = 12)),
+        axis.title.y = element_text(size = 14, margin = margin(r = 12)),
+        strip.text = element_text(size = 14))
+
+# Compute predictions by discharge (at mean visibility or vis = 0)
+p_dis <- coef_p |> 
+  expand(nesting(`beta0_p[1]`, `beta0_p[2]`, `beta0_p[3]`, 
+                 `z_p[1]`, `z_p[2]`,
+                 `beta_p[1]`, `beta_p[2]`, 
+                 `theta_p[1]`, `theta_p[2]`, `theta_p[3]`),
+         dis = seq(min(dis), max(dis), 0.1)) |>
+  mutate(alpha_1 = plogis(`beta0_p[1]` + `z_p[2]` * `beta_p[2]` * dis) * `theta_p[1]`,
+         alpha_2 = plogis(`beta0_p[2]` + `z_p[2]` * `beta_p[2]` * dis) * `theta_p[2]`,
+         alpha_3 = plogis(`beta0_p[3]` + `z_p[2]` * `beta_p[2]` * dis) * `theta_p[3]`,
+         beta_1 = (1 - plogis(`beta0_p[1]` + `z_p[2]` * `beta_p[2]` * dis)) * `theta_p[1]`,
+         beta_2 = (1 - plogis(`beta0_p[2]` + `z_p[2]` * `beta_p[2]` * dis)) * `theta_p[2]`,
+         beta_3 = (1 - plogis(`beta0_p[3]` + `z_p[2]` * `beta_p[2]` * dis)) * `theta_p[3]`,
+         `Size class 1 (10-30cm)` = alpha_1 / (alpha_1 + beta_1),
+         `Size class 2 (30-50cm)` = alpha_2 / (alpha_2 + beta_2),
+         `Size class 3 (50+cm)` = alpha_3 / (alpha_3 + beta_3),
+         dis = dis * sd(conditions$dis) + mean(conditions$dis)) |>
+  pivot_longer(`Size class 1 (10-30cm)`:`Size class 3 (50+cm)`, 
+               names_to = "size_class", values_to = "p")
+
+let_dis <- tibble(size_class = c("Size class 1 (10-30cm)", 
+                                 "Size class 2 (30-50cm)", 
+                                 "Size class 3 (50+cm)"),
+                  label = c("(d)", "(e)", "(f)"))
+
+# Plot detection probability by discharge
+plot_dis <- ggplot(p_dis, aes(x = dis, y = p)) +
+  geom_fan(show.legend = FALSE, intervals = seq(0, 1, 0.01)) +
+  ggfan::geom_interval(intervals = c(0, 0.5, 0.95)) +
+  geom_text(data = let_dis, aes(x = 13, y = 1, label = label, size = 14)) +
+  xlab(bquote("Discharge"~(m^3 / sec))) +
+  ylab("Detection probability") +
+  scale_x_continuous(breaks = seq(10, 60, 10)) +
+  coord_cartesian(ylim = c(0, 1)) +
+  scale_fill_gradientn(colours = rev(brewer.pal(n = 9, "Blues"))) +
+  facet_wrap(~ size_class) +
+  theme_bw() +
+  theme(legend.position = "none",
+        panel.grid = element_blank(),
+        axis.text = element_text(size = 12),
+        axis.title.x = element_text(size = 14, margin = margin(t = 12)),
+        axis.title.y = element_text(size = 14, margin = margin(r = 12)),
+        strip.text = element_blank())
+
+# Compute predictions by year
+
+p_year <- select(spl_df, starts_with("p[")) |>
+  mutate(iter = 1:n()) |>
+  pivot_longer(starts_with("p["), names_to = "idx", values_to = "p") |>
+  mutate(t = as.numeric(str_extract_all(idx, "[[:digit:]]+", simplify = TRUE)[, 2]),
+         c = as.numeric(str_extract_all(idx, "[[:digit:]]+", simplify = TRUE)[, 1]),
+         year = if_else(t <= 25, 1987 + t, 1987 + t + 1),
+         size_class = case_when(c == 1 ~ "Size class 1 (10-30cm)",
+                                c == 2 ~ "Size class 2 (30-50cm)",
+                                c == 3 ~ "Size class 3 (50+cm)")) |>
+  left_join(select(conditions, year, dis, vis), by = join_by(year))
+
+p_year_sry <- group_by(p_year, year, c) |>
+  summarize(mdn = median(p),
+            lwr_95 = hdi(p, credMass = 0.95)[1],
+            upr_95 = hdi(p, credMass = 0.95)[2],
+            lwr_50 = hdi(p, credMass = 0.50)[1],
+            upr_50 = hdi(p, credMass = 0.50)[2],
+            dis = mean(dis),
+            vis = mean(vis))
+
+let_year <- tibble(c = 1:3,
+                   label = c("(g)", "(g)", "(g)"))
+
+plot_year <- ggplot(filter(p_year_sry, c == 2), aes(x = year, y = mdn)) +
+  geom_line(colour = "gray75", size = 0.25) +
+  geom_errorbar(aes(ymin = lwr_95, ymax = upr_95), width = 0) +
+  geom_errorbar(aes(ymin = lwr_50, ymax = upr_50), width = 0, size = 1.5) +
+  geom_point(aes(x = year, y = mdn, size = vis, fill = dis), shape = 21) +
+  geom_text(data = filter(let_year, c == 2), aes(x = 1988, y = 1, label = label, size = 5)) +
+  scale_x_continuous(breaks = seq(1988, 2022, 2)) +
+  scale_fill_gradientn(colours = brewer.pal(n = 9, "Blues")) +
+  coord_cartesian(ylim = c(0, 1)) +
+  xlab("Year") +
+  ylab("Detection probability") +
+  guides(size = guide_legend(override.aes = list(shape = 16, colour = "gray"), 
+                             title = "Mean visibility (m)", title.position = "top",
+                             title.hjust = 0.5),
+         fill = guide_colourbar(title = bquote(Mean~discharge~(m^3/s)),
+                                  title.position = "top", title.hjust = 0.5)) +
+  theme_bw() +
+  theme(legend.position = c(0.25, 0.1),
+        legend.direction = "horizontal",
+        legend.box = "horizontal",
+        legend.box.just = "centre",
+        panel.grid = element_blank(),
+        axis.text.x = element_text(size = 12),
+        axis.text.y = element_text(size = 12),
+        axis.title.x = element_text(size = 14, margin = margin(t = 12)),
+        axis.title.y = element_text(size = 14, margin = margin(r = 12)),
+        strip.text = element_blank())
+
+grid.arrange(plot_vis, plot_dis, plot_year, nrow = 3)
+```
+
+# Figure AS2-S10
+
+```{r}
+#| label: appx-s2-fig-s10
+#| message: false
+#| warning: false
+#| fig-cap: XXX
+#| echo: false
+#| fig-height: 16
+#| fig-width: 10
+
+# Population growth rate (lambda)
+
+lam_M_spl <- select(spl_df, starts_with("lam_M[")) |>
+  mutate(iter = 1:n()) |>
+  pivot_longer(starts_with("lam_M["), names_to = "idx", values_to = "lam_M") |>
+  mutate(t = as.numeric(str_extract_all(idx, "[[:digit:]]+", simplify = TRUE)[, 1]),
+         year = 1987 + t)
+
+lam_M_sry <- group_by(lam_M_spl, year) |>
+  summarize(mdn = median(lam_M),
+            lwr_95 = hdi(lam_M, credMass = 0.95)[1], 
+            upr_95 = hdi(lam_M, credMass = 0.95)[2],
+            lwr_50 = hdi(lam_M, credMass = 0.50)[1], 
+            upr_50 = hdi(lam_M, credMass = 0.50)[2])
+
+let_lam_M <- tibble(x_pos = 2021, 
+                    y_pos = 4, 
+                    label = "(a)")
+
+plot_lam <- lam_M_sry |>
+ggplot(aes(x = year, y = mdn)) +
+  geom_hline(yintercept = 1, linetype = "dashed") +
+  geom_line(colour = "gray75", size = 0.25) +
+  geom_errorbar(aes(ymin = lwr_95, ymax = upr_95), width = 0) +
+  geom_errorbar(aes(ymin = lwr_50, ymax = upr_50), width = 0, size = 1.5) +
+  geom_point(size = 3) +
+  geom_text(data = let_lam_M, aes(x = x_pos, y = y_pos, label = label, size = 14),
+            show.legend = FALSE) +
+  scale_x_continuous(breaks = seq(1988, 2021, 3)) +
+  xlab(NULL) +
+  ylab(bquote("Population growth rate from"~italic(t-1)~to~italic(t)~(lambda[italic(t-1)]))) +
+  theme_bw() +
+  theme(panel.grid = element_blank(),
+        axis.text = element_text(size = 12),
+        axis.title.x = element_text(size = 14, margin = margin(t = 12)),
+        axis.title.y = element_text(size = 14, margin = margin(r = 12)))
+
+
+# Population structure (eta)
+
+eta_M_spl <- select(spl_df, starts_with("eta_M[")) |>
+  mutate(iter = 1:n()) |>
+  pivot_longer(starts_with("eta_M["), names_to = "idx", values_to = "eta_M") |>
+  mutate(t = as.numeric(str_extract_all(idx, "[[:digit:]]+", simplify = TRUE)[, 2]),
+         c = as.numeric(str_extract_all(idx, "[[:digit:]]+", simplify = TRUE)[, 1]),
+         year = 1987 + t,
+         size_class = case_when(c == 1 ~ "Size class 1 (10-30cm)",
+                                c == 2 ~ "Size class 2 (30-50cm)",
+                                c == 3 ~ "Size class 3 (50+cm)"))
+
+eta_M_sry <- group_by(eta_M_spl, c, size_class, year) |>
+  summarize(mdn = median(eta_M),
+            lwr_95 = hdi(eta_M, credMass = 0.95)[1], 
+            upr_95 = hdi(eta_M, credMass = 0.95)[2],
+            lwr_50 = hdi(eta_M, credMass = 0.50)[1], 
+            upr_50 = hdi(eta_M, credMass = 0.50)[2])
+
+let_eta_M <- tibble(x_pos = 2022, 
+                    y_pos = 1, 
+                    label = "(b)")
+
+plot_eta <- eta_M_sry |>
+ggplot(aes(x = year, y = mdn, group = size_class, colour = size_class)) +
+  geom_line(size = 0.25) +
+  geom_point(size = 3) +
+  scale_color_brewer(type = "qual", palette = "Paired") +
+  geom_text(data = let_eta_M, inherit.aes = FALSE, 
+            aes(x = x_pos, y = y_pos, label = label, size = 14),
+            show.legend = FALSE) +
+  scale_x_continuous(breaks = seq(1988, 2022, 2)) +
+  scale_y_continuous(breaks = seq(0, 1, 0.1)) +
+  coord_cartesian(ylim = c(0, 1)) +
+  xlab(bquote("Year ("*italic(t-1)*")")) +
+  ylab(bquote("Population structure ("*italic(eta[paste(c,",", t-1)])*")")) +
+  theme_bw() +
+  theme(legend.position = c(0.5, 0.955),
+        legend.direction = "horizontal",
+        legend.title = element_blank(),
+        legend.text = element_text(size = 12),
+        panel.grid = element_blank(),
+        axis.text = element_text(size = 12),
+        axis.title.x = element_text(size = 14, margin = margin(t = 12)),
+        axis.title.y = element_text(size = 14, margin = margin(r = 12)))
+
+grid.arrange(plot_lam, plot_eta, nrow = 2)
+```
+
+# Figure AS2-S11
+
+```{r}
+#| label: appx-s2-fig-s11
+#| message: false
+#| fig-cap: XXX
+#| echo: false
+#| fig-height: 8
+#| fig-width: 12
+
+# Plot gamma over time
+
+M_spl <- select(spl_df, starts_with("M[")) |>
+  mutate(iter = 1:n()) |>
+  pivot_longer(starts_with("M["), names_to = "idx", values_to = "M") |>
+  mutate(c = as.numeric(str_extract_all(idx, "[[:digit:]]+", simplify = TRUE)[, 1]),
+         t = as.numeric(str_extract_all(idx, "[[:digit:]]+", simplify = TRUE)[, 2]),
+         year = 1987 + t,
+         size_class = case_when(c == 1 ~ "Size class 1 (10-30cm)",
+                                c == 2 ~ "Size class 2 (30-50cm)",
+                                c == 3 ~ "Size class 3 (50+cm)")) |>
+  filter(year < 2023) # 2023 is projected in the model
+
+M_sry <- group_by(M_spl, t, c, size_class, year) |>
+  summarize(mdn = median(M),
+            lwr_95 = hdi(M, credMass = 0.95)[1], 
+            upr_95 = hdi(M, credMass = 0.95)[2],
+            lwr_50 = hdi(M, credMass = 0.50)[1], 
+            upr_50 = hdi(M, credMass = 0.50)[2])
+
+M23 <- filter(M_sry, c != 1) |> 
+  group_by(year) |> 
+  summarize(M23 = sum(mdn)) |>
+  pull(M23)
+
+## Compute predictions by year
+
+gamma_year <- select(spl_df, starts_with("gamma[")) |>
+  mutate(iter = 1:n()) |>
+  pivot_longer(starts_with("gamma["), names_to = "idx", values_to = "gamma") |>
+  mutate(t = as.numeric(str_extract_all(idx, "[[:digit:]]+", simplify = TRUE)),
+         year = 1987 + t) |>  
+  left_join(tibble(year = 1988:2022, M23 = M23 / 2), by = join_by(year))
+
+gamma_year_sry <- group_by(gamma_year, year) |>
+  summarize(mdn = median(gamma),
+            lwr_95 = hdi(gamma, credMass = 0.95)[1],
+            upr_95 = hdi(gamma, credMass = 0.95)[2],
+            lwr_50 = hdi(gamma, credMass = 0.50)[1],
+            upr_50 = hdi(gamma, credMass = 0.50)[2],
+            M23 = mean(M23)) |>
+    filter(year != 2022) # 2022 is predicted without data (no counts in 2023)
+
+let_gamma_year <- tibble(label = "(e)")
+
+ggplot(gamma_year_sry, aes(x = year, y = mdn)) +
+  geom_line(colour = "gray75", size = 0.25) +
+  geom_errorbar(aes(ymin = lwr_95, ymax = upr_95), width = 0) +
+  geom_errorbar(aes(ymin = lwr_50, ymax = upr_50), width = 0, size = 1.5) +
+  geom_point(aes(x = year, y = mdn, fill = M23), shape = 21, size = 3) +
+  scale_x_continuous(breaks = seq(1988, 2021, 3)) +
+  scale_fill_gradientn(colours = brewer.pal(n = 9, "Blues")) +
+  #  coord_cartesian(ylim = c(0, 1)) +
+  xlab(bquote("Year ("*italic(t-1)*")")) +
+  ylab(bquote("Productivity at"~italic(t-1)~(gamma[italic(t-1)]))) +
+  guides(size = "none",
+         fill = guide_colourbar(title = bquote("Female rainbow trout \n spanwer abundance at "*italic(t-1)),
+                                title.position = "top", title.vjust = 1,
+                                title.hjust = 0, label.hjust = 0.5,
+                                barwidth = 9, nbin = 600)) +
+  theme_bw() +
+  theme(legend.position = c(0.9, 0.9),
+        legend.background = element_blank(),
+        legend.direction = "horizontal",
+        panel.grid = element_blank(),
+        axis.text.x = element_text(size = 12),
+        axis.text.y = element_text(size = 12),
+        axis.title.x = element_text(size = 14, margin = margin(t = 12)),
+        axis.title.y = element_text(size = 14, margin = margin(r = 12)),
+        strip.text = element_text(size = 14))
+```
+
+# Figure AS2-S12
+
+```{r}
+#| label: appx-s2-fig-s12
+#| message: false
+#| fig-cap: XXX
+#| echo: false
+#| fig-height: 10
+#| fig-width: 8
+
+# Compute phi by year
+
+predictors <- tibble(year = 1988:2022, tair = dat$tair[9:43],
+                     skt2 = dat$skt2[9:43], skt1 = dat$skt1[9:43])
+
+phi_year <- select(spl_df, starts_with("phi[")) |>
+  mutate(iter = 1:n()) |>
+  pivot_longer(starts_with("phi["), names_to = "idx", values_to = "phi") |>
+  mutate(t = as.numeric(str_extract_all(idx, "[[:digit:]]+", simplify = TRUE)[, 2]),
+         c = as.numeric(str_extract_all(idx, "[[:digit:]]+", simplify = TRUE)[, 1]),
+         year = 1987 + t,
+         size_class = case_when(c == 1 ~ "Size class 1 (10-30cm)",
+                                c == 2 ~ "Size class 2 (30-50cm)",
+                                c == 3 ~ "Size class 3 (50+cm)")) |>
+  left_join(predictors, by = join_by(year))
+
+phi_year_sry <- group_by(phi_year, year, c, size_class) |>
+  summarize(mdn = median(phi),
+            lwr_95 = hdi(phi, credMass = 0.95)[1],
+            upr_95 = hdi(phi, credMass = 0.95)[2],
+            lwr_50 = hdi(phi, credMass = 0.50)[1],
+            upr_50 = hdi(phi, credMass = 0.50)[2],
+            tair = mean(tair),
+            skt2 = mean(skt2),
+            skt1 = mean(skt1)) |>
+  filter(year != 2022) # 2022 is predicted without data (no counts in 2023)
+
+let_phi_year <- tibble(size_class = c("Size class 1 (10-30cm)", 
+                                  "Size class 2 (30-50cm)", 
+                                  "Size class 3 (50+cm)"),
+                       label = c("(a)", "(b)", "(c)"))
+
+ggplot(phi_year_sry, aes(x = year, y = mdn)) +
+  geom_line(colour = "gray75", size = 0.25) +
+  geom_errorbar(aes(ymin = lwr_95, ymax = upr_95), width = 0) +
+  geom_errorbar(aes(ymin = lwr_50, ymax = upr_50), width = 0, size = 1.5) +
+  geom_point(aes(x = year, y = mdn, size = skt1 / 1000, fill = tair), shape = 21) +
+  geom_text(data = let_phi_year,
+            aes(x = 2021, y = 1, label = label, size = 300)) +
+  #ßgeom_smooth(method = "gam", se = FALSE, colour = "black") +
+  scale_x_continuous(breaks = seq(1988, 2021, 3)) +
+  scale_fill_gradientn(colours = brewer.pal(n = 9, "Blues")) +
+  coord_cartesian(ylim = c(0, 1)) +
+  xlab(bquote("Year ("*italic(t-1)*")")) +
+  ylab(bquote("Survival probability from"~italic(t-1)~to~italic(t)~(phi[italic(t-1)]))) +
+  guides(size = guide_legend(override.aes = list(shape = 16, colour = "gray"),
+                             title = bquote("Sockeye salmon abundance (x 1,000) at"~italic(t-1)),
+                             title.position = "top",
+                             title.hjust = 0.5),
+         fill = guide_colourbar(title = bquote("August mean air temperature (°C) at"~italic(t-1)),
+                                  title.position = "top", title.hjust = 0.5)) +
+  facet_wrap(~ size_class, nrow = 3) +
+  theme_bw() +
+  theme(legend.position = "top",
+        legend.direction = "horizontal",
+        legend.box = "horizontal",
+        legend.box.just = "centre",
+        panel.grid = element_blank(),
+        axis.text.x = element_text(size = 12),
+        axis.text.y = element_text(size = 12),
+        axis.title.x = element_text(size = 14, margin = margin(t = 12)),
+        axis.title.y = element_text(size = 14, margin = margin(r = 12)),
+        strip.text = element_text(size = 14))
+```
+
+# Figure AS2-S13
+
+```{r}
+#| label: appx-s2-fig-s13
+#| message: false
+#| fig-cap: XXX
+#| echo: false
+#| fig-height: 12
+#| fig-width: 10
+
+# Compute psi by year
+
+predictors <- tibble(year = 1988:2022, tair = dat$tair[9:43],
+                     skt2 = dat$skt2[9:43], skt1 = dat$skt1[9:43])
+
+psi_year <- select(spl_df, starts_with("psi[", ignore.case = FALSE)) |>
+  mutate(iter = 1:n()) |>
+  pivot_longer(starts_with("psi["), names_to = "idx", values_to = "psi") |>
+  mutate(t = as.numeric(str_extract_all(idx, "[[:digit:]]+", simplify = TRUE)[, 2]),
+         c = as.numeric(str_extract_all(idx, "[[:digit:]]+", simplify = TRUE)[, 1]),
+         year = 1979 + t,
+         transition = case_when(c == 1 ~ "Size class 1 to 2",
+                                c == 2 ~ "Size class 2 to 3",
+                                c == 3 ~ NA)) |>
+  filter(c != 3) |>
+  filter(t %in% 9:43) |>
+  left_join(predictors, by = join_by(year))
+
+psi_year_sry <- group_by(psi_year, year, c, transition) |>
+  summarize(mdn = median(psi),
+            lwr_95 = hdi(psi, credMass = 0.95)[1],
+            upr_95 = hdi(psi, credMass = 0.95)[2],
+            lwr_50 = hdi(psi, credMass = 0.50)[1],
+            upr_50 = hdi(psi, credMass = 0.50)[2],
+            tair = mean(tair),
+            skt2 = mean(skt2),
+            skt1 = mean(skt1)) |>
+  filter(year != 2022) # 2022 is predicted without data (no counts in 2023)
+
+let_psi_year <- tibble(transition = c("Size class 1 to 2", 
+                                      "Size class 2 to 3"),
+                       label = c("(a)", "(b)"))
+
+ggplot(psi_year_sry, aes(x = year, y = mdn)) +
+  geom_line(colour = "gray75", size = 0.25) +
+  geom_errorbar(aes(ymin = lwr_95, ymax = upr_95), width = 0) +
+  geom_errorbar(aes(ymin = lwr_50, ymax = upr_50), width = 0, size = 1.5) +
+  geom_point(aes(x = year, y = mdn, size = skt1 / 1000, fill = tair), shape = 21) +
+  geom_text(data = let_psi_year,
+            aes(x = 2021, y = 1, label = label, size = 300)) +
+  scale_x_continuous(breaks = seq(1988, 2021, 3)) +
+  scale_fill_gradientn(colours = brewer.pal(n = 9, "Blues")) +
+  coord_cartesian(ylim = c(0, 1)) +
+  xlab(bquote("Year ("*italic(t-1)*")")) +
+  ylab(bquote("Transition probability from"~italic(t-1)~to~italic(t)~(psi[italic(t-1)]))) +
+  guides(size = guide_legend(override.aes = list(shape = 16, colour = "gray"),
+                             title = bquote("Sockeye salmon abundance (x 1,000) in year"~italic(t-1)),
+                             title.position = "top",
+                             title.hjust = 0.5),
+         fill = guide_colourbar(title = bquote("August mean air temperature (°C) in year"~italic(t-1)),
+                                  title.position = "top", title.hjust = 0.5)) +
+  facet_wrap(~ transition, nrow = 2) +
+  theme_bw() +
+  theme(legend.position = "top",
+        legend.direction = "horizontal",
+        legend.box = "horizontal",
+        legend.box.just = "centre",
+        panel.grid = element_blank(),
+        axis.text.x = element_text(size = 12),
+        axis.text.y = element_text(size = 12),
+        axis.title.x = element_text(size = 14, margin = margin(t = 12)),
+        axis.title.y = element_text(size = 14, margin = margin(r = 12)),
+        strip.text = element_text(size = 14))
+```
+
+# Figure AS2-S14
+
+```{r}
+#| label: appx-s2-fig-s14
+#| message: false
+#| fig-cap: XXX
+#| echo: false
+#| fig-height: 8
+#| fig-width: 10
+
+# Contributions to differences between consecutive years
+ltre_diff_ep <- bind_rows(readRDS(here("outputs/output_ltre_diff.rds"))$ltre_diff) |>
+  # Remove psi1 and psi2 and related predictors and environmental stochasticties as they don't contribute to differences in lambda.
+  filter(!(type_1 %in% c("Transition (size class 1 to 2)", 
+                         "Transition (size class 2 to 3)"))) |>
+  filter(type_2 != "Population structure") |>
+  mutate(type_1 = factor(type_1, 
+                         levels = c("Productivity", "Survival (size class 1)",
+                                    "Survival (size class 2)", "Survival (size class 3)")),
+         pred = str_replace(par, ".*_", ""),
+         pred = factor(pred, levels = c("tair", "dsch", "skt1", "skt2", "dd", "est"))) |>
+  group_by(year, type_1, par, pred) |>
+  summarize(cont_es = median(cont_es),
+            rel_cont_es = median(rel_cont_es))
+
+let_ep <- data.frame(type_1 = c("Productivity", "Survival (size class 1)",
+                                "Survival (size class 2)", "Survival (size class 3)"), 
+                     x = rep(2020, 4), y = rep(1, 4), 
+                     label = c("(a)", "(b)", "(c)", "(d)"))
+
+ggplot(ltre_diff_ep, aes(x = year, y = cont_es, fill = pred)) +
+  geom_bar(position = "stack", stat = "identity", width = 0.75) +
+  #annotate("text", x = 2020, y = 1.35, label = "(b)", size = 6) +
+  #scale_y_continuous(breaks = seq(-1.5, 1.5, 0.3)) +
+  geom_text(data = let_ep, inherit.aes = FALSE,
+            aes(x = x, y = y, label = label), size = 4) +
+  scale_x_continuous(breaks = seq(1988, 2020, 2)) +
+  scale_fill_brewer(type = "div", palette = "RdYlBu",
+                    labels = c(bquote(beta["" %.% ""][",tair"]), 
+                    bquote(beta[gamma][",dsch"]),
+                    bquote(beta[phi][",skt1"]),
+                    bquote(beta["" %.% ""][",skt2"]),
+                    bquote(beta["" %.% ""][",DD"]),
+                    bquote(epsilon["" %.% ""]))) +
+  coord_cartesian(ylim = c(-1, 1)) +
+  ylab(bquote("Approximated contibution to "*Delta*lambda[t-1])) + 
+  xlab(bquote("Year ("*italic(t-1)*")")) +
+  guides(fill = guide_legend(nrow = 1)) +
+  facet_wrap(~ type_1) +
+  theme_bw() +
+  theme(legend.position = "top",
+        legend.title = element_blank(),
+        legend.text = element_text(size = 12),
+        panel.grid.major = element_line(linewidth = 0.1, colour = "gray90"),
+        panel.grid.minor = element_blank(),
+        axis.text.x = element_text(size = 12, angle = 90, vjust = 0.5),
+        axis.text.y = element_text(size = 12),
+        axis.title.x = element_text(size = 14, margin = margin(t = 12)),
+        axis.title.y = element_text(size = 14, margin = margin(r = 12)))
+```

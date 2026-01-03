@@ -1,0 +1,157 @@
+---
+title: "Appendix S1 Figures"
+format: html
+editor: visual
+---
+
+```{r}
+#| label: setup
+#| message: false
+#| echo: false
+
+library(tidyverse)
+library(ggfan)
+library(bayesplot)
+library(gridExtra)
+library(here)
+
+out <- readRDS(here("outputs/spl_dat_vbgf.rds"))
+
+spl_lst <- out$spl
+
+spl_df <- as.data.frame(do.call(rbind, spl_lst))
+  
+ns <- nrow(spl_df)
+
+dat <- out$dat
+```
+
+# Figure AS1-S1
+
+```{r}
+#| label: appx-s1-fig-s1
+#| warning: false
+#| echo: false
+#| fig-height: 6
+#| fig-width: 6
+
+not_na <- which(!is.na(as.vector(dat$L)))
+
+L_obs <- as.vector(dat$L)[not_na]
+
+res_L <- select(spl_df, starts_with("res_L"))[, not_na]
+
+res_L_rep <- select(spl_df, starts_with("res_L_rep"))[, not_na]
+
+L_obs_dis <- rowSums(res_L ^ 2, na.rm = TRUE)
+  
+L_rep_dis <- rowSums(res_L_rep ^ 2, na.rm = TRUE)
+  
+tibble(L_obs_dis = L_obs_dis,
+       L_rep_dis = L_rep_dis) |>
+  ggplot(aes(x = L_obs_dis, y = L_rep_dis)) +
+    geom_point(colour = "lightblue", alpha = 0.4) +
+    geom_abline(intercept = 0, slope = 1, linetype = "dashed", colour = "gray") +
+    xlab("Discrepancy of observed data") +
+    ylab("Discrepancy of simulated data") +
+    theme_bw() +
+    theme(panel.grid = element_blank())
+```
+
+# Figure AS1-S2
+
+```{r}
+#| label: appx-s1-fig-s2
+#| message: false
+#| echo: false
+#| fig-height: 10
+#| fig-width: 10
+
+not_na <- which(!is.na(as.vector(dat$L)))
+
+L_obs <- as.vector(dat$L)[not_na]
+
+L_rep <- as.matrix(select(spl_df, starts_with("L_rep"))[, not_na])
+
+A <- ppc_dens_overlay(L_obs, L_rep) + 
+  annotate("text", x = 62, y = 0.027, label = "(a)", size = 4) +
+  ylab("Probability density") +
+  theme_bw() +
+  theme(legend.position = "top")
+
+B <- ppc_stat(L_obs, L_rep, stat = "mean", binwidth = 0.1) +
+  annotate("text", x = 28.5, y = 875, label = "(b)", size = 4) +
+  ylab("Frequency") +
+  theme_bw() +
+  theme(legend.position = "top")
+
+C <- ppc_stat(L_obs, L_rep, stat = "min", binwidth = 0.1) + 
+  annotate("text", x = 6.75, y = 155, label = "(c)", size = 4) +
+  xlab("Length (cm)") +
+  ylab("Frequency") +
+  theme_bw() +
+  theme(legend.position = "top")
+
+D <- ppc_stat(L_obs, L_rep, stat = "max", binwidth = 0.25) + 
+  annotate("text", x = 65, y = 225, label = "(d)", size = 4) +
+  xlab("Length (cm)") +
+  ylab("Frequency") +
+  theme_bw() +
+  theme(legend.position = "top")
+
+grid.arrange(A, B, C, D, nrow = 2)
+```
+
+# Figure AS1-S3
+
+```{r}
+#| label: appx-s1-fig-s3
+#| echo: false
+
+L_obs <- read_csv(here("data/raw/age_length.csv")) |>
+  select(c(sample_id, `1`:`9`)) |>
+  pivot_longer(`1`:`9`, names_to = "age", values_to = "length") |>
+  mutate(age = as.numeric(age),
+         length = length / 10) |>
+  group_by(sample_id) |>
+  drop_na() |>
+  mutate(type = if_else(age == max(age), "obs", "est"))
+
+vbgf_par <- cbind(select(spl_df, starts_with("L_inf")),
+                  select(spl_df, starts_with("a0")),
+                  select(spl_df, starts_with("mu_K")))
+
+# Predict length-at-age using VBGF
+vbgf_df <- vbgf_par |> 
+  expand(nesting(`L_inf`, `a0`, `mu_K`),
+         a = seq(0, 9, 0.1)) |>
+  mutate(L = L_inf * (1 - exp(-mu_K * (a - a0))))
+
+ggplot(vbgf_df, aes(x = a, y = L)) +
+  geom_fan(show.legend = FALSE, intervals = seq(0, 1, 0.01)) +
+  ggfan::geom_interval(intervals = c(0, 0.95)) +
+  geom_point(data = L_obs, aes(x = age, y = length, colour = type, alpha = type,
+                               shape = type), 
+             position = position_dodge(0.35), size = 2) +
+  xlab("Age (years)") +
+  ylab("Length (cm)") +
+  scale_x_continuous(breaks = 0:9, expand = c(0, 0.1)) +
+  scale_y_continuous(breaks = seq(0, 60, 10), expand = c(0, 0)) +
+  scale_fill_gradientn(colours = rev(brewer.pal(n = 9, "Blues"))) +
+  scale_colour_manual(values = c("#a94442", "darkorange"), 
+                      labels = c("Estimated", "Observed")) +
+  scale_alpha_manual(values = c(0.6, 1), labels = c("Estimated", "Observed")) +
+  scale_shape_manual(values = c(16, 8), labels = c("Estimated", "Observed")) +
+  coord_cartesian(ylim = c(0, 60)) +
+  guides(linetype = "none",
+         shape = guide_legend(override.aes = list(size = 3))) +
+  theme_bw() +
+  theme(legend.position = "top",
+        legend.title = element_blank(),
+        legend.text = element_text(size = 12),
+        panel.grid.minor = element_blank(),
+        axis.text = element_text(size = 12),
+        axis.title.x = element_text(size = 14, margin = margin(t = 12)),
+        axis.title.y = element_text(size = 14, margin = margin(r = 12)),
+        strip.text = element_text(size = 14))
+```

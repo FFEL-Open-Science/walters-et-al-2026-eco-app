@@ -1,0 +1,116 @@
+---
+title: "Check model fit"
+format: html
+editor: visual
+execute:
+  echo: false
+---
+
+# Setup
+
+```{r}
+#| label: setup
+#| message: false
+
+library(MCMCvis)
+library(tidyverse)
+library(bayesplot)
+library(truncnorm)
+library(here)
+
+out <- readRDS(here("outputs/spl_dat_vbgf.rds"))
+
+spl_lst <- out$spl
+
+spl_df <- as.data.frame(do.call(rbind, spl_lst))
+  
+ns <- nrow(spl_df)
+
+dat <- out$dat
+```
+
+# Check MCMC
+
+## High level parameters
+
+```{r}
+#| label: check-chains-vb-high_level
+(mcmc_summary <- MCMCsummary(spl_lst, round = 2, 
+                             params = c("L_inf", "mu_K", "sig_K", "a0", "sig_L", "rho")))
+
+pr <- cbind(rtruncnorm(ns, mean = 52, sd = 5, a = 0, b = Inf),
+             rtruncnorm(ns, mean = 0, sd = 1, a = 0, b = Inf),
+             rtruncnorm(ns, mean = 0, sd = 1, a = 0, b = Inf),
+             rnorm(ns, 0, 1),
+             rtruncnorm(ns, mean = 0, sd = 5, a = 0, b = Inf),
+             rbeta(ns, 1, 1))
+
+MCMCtrace(spl_lst, params = c("L_inf", "mu_K", "sig_K", "a0", "sig_L", "rho"),
+          pdf = FALSE, Rhat = TRUE, post_zm = FALSE, priors = pr)
+
+```
+
+## Individual $K_i$
+
+```{r}
+#| label: check-chains-vb-k
+(mcmc_summary <- MCMCsummary(spl_lst, round = 2, params = "K"))
+
+MCMCtrace(spl_lst, params = "K", pdf = FALSE, Rhat = TRUE)
+
+```
+
+## Age of lower size limit
+
+```{r}
+#| label: check-chains-age
+(mcmc_summary <- MCMCsummary(spl_lst, round = 2, params = c("a10", "a30", "a50")))
+
+MCMCtrace(spl_lst, params = c("a10", "a30", "a50"), pdf = FALSE, Rhat = TRUE)
+```
+
+# Bayesian p-value
+
+```{r}
+#| label: bayesian_p-value_vbgf
+#| warning: false
+
+not_na <- which(!is.na(as.vector(dat$L)))
+
+L_obs <- as.vector(dat$L)[not_na]
+
+res_L <- select(spl_df, starts_with("res_L"))[, not_na]
+
+res_L_rep <- select(spl_df, starts_with("res_L_rep"))[, not_na]
+
+L_obs_dis <- rowSums(res_L ^ 2, na.rm = TRUE)
+  
+L_rep_dis <- rowSums(res_L_rep ^ 2, na.rm = TRUE)
+  
+plot(L_obs_dis, L_rep_dis, xlab = "Discrepancy of observed data",
+     ylab = "Discrepancy of simulated data")
+abline(0, 1, col = "red")
+
+round(mean(L_rep_dis > L_obs_dis, na.rm = TRUE), 2)
+
+```
+
+# Posterior predictive checks
+
+```{r}
+#| label: pp-check-vbgf
+
+not_na <- which(!is.na(as.vector(dat$L)))
+
+L_obs <- as.vector(dat$L)[not_na]
+
+L_rep <- as.matrix(select(spl_df, starts_with("L_rep"))[, not_na])
+
+ppc_dens_overlay(L_obs, L_rep) + theme_bw()
+
+ppc_stat(L_obs, L_rep, stat = "mean") + theme_bw()
+
+ppc_stat(L_obs, L_rep, stat = "min") + theme_bw()
+
+ppc_stat(L_obs, L_rep, stat = "max") + theme_bw()
+```
