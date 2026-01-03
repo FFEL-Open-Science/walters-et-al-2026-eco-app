@@ -6,7 +6,7 @@ This repository contains data and codes associated with the article [**Disentang
 This is required so you can download output files (`out_fit_dat.rds`), which can be up to about 2GB in size.
 Once you have setup Git LFS (see instructions [here](https://docs.github.com/en/repositories/working-with-files/managing-large-files/installing-git-large-file-storage)), issue the command `git lfs pull` in an RStudio terminal, so the output file is downloaded, rather than just the pointer file.
 
-==THIS DOI BADGE IS JUST A PLACEHOLDER UNTIL ONE IS CREATED FOR THIS REPO== [![DOI](https://zenodo.org/badge/944068586.svg)](https://doi.org/10.5281/zenodo.14984681)
+[![DOI](https://zenodo.org/badge/1126025607.svg)](https://doi.org/10.5281/zenodo.18140770)
 
 ## Data and file structure
 
