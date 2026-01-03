@@ -1,9 +1,3 @@
----
-editor_options: 
-  markdown: 
-    wrap: sentence
----
-
 # Description
 
 This repository contains data and codes associated with the article [**Disentangling the contributions of density dependence and independence to population growth rates**]()
